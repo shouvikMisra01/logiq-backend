@@ -48,14 +48,18 @@ export const getSubjectsForStudent = async (
   try {
     console.log('[Syllabus] Get subjects request from user:', req.user);
 
-    if (!req.student) {
-      console.log('[Syllabus] No student data in request');
-      res.status(401).json({ error: 'Unauthorized - Student role required' });
+    // Allow both students and parents to access this endpoint
+    // Students have req.student populated, parents have classNumber in req.user
+    const classNumber = req.student?.classNumber || req.user?.classNumber;
+
+    if (!classNumber) {
+      console.log('[Syllabus] No class data in request');
+      res.status(401).json({ error: 'Unauthorized - Student or Parent role required' });
       return;
     }
 
-    console.log('[Syllabus] Fetching subjects for class:', req.student.classNumber);
-    const subjects = await SyllabusService.getSubjectsForClass(req.student.classNumber);
+    console.log('[Syllabus] Fetching subjects for class:', classNumber);
+    const subjects = await SyllabusService.getSubjectsForClass(classNumber);
 
     console.log('[Syllabus] Found', subjects.length, 'subjects');
     res.json({ subjects });

@@ -209,4 +209,4 @@ For issues and questions, please open a GitHub issue.
 
 ## 🔗 Related
 
-- Frontend Repository: [logiq-frontend](https://github.com/your-username/logiq-frontend)
+- Frontend Repository: [logiq-frontend](https://github.com/shouvikMisra01/logiq-frontend)

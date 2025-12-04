@@ -244,33 +244,48 @@ Return ONLY the JSON with questions.`;
       console.log('[LLMService] Raw content length before LaTeX fix:', rawContent.length);
 
       // Fix common LaTeX escaping issues in JSON strings
-      // Replace single backslashes with double backslashes in LaTeX expressions
-      // This handles cases where AI doesn't properly escape: \frac -> \\frac
+      // We need to ensure backslashes in LaTeX expressions are properly escaped for JSON
+      // In JSON strings, a literal backslash needs to be \\
+      // So \sqrt should become \\\\sqrt (4 backslashes) to represent \\sqrt after parsing
       let latexFixCount = 0;
-      rawContent = rawContent.replace(/\$\$([^$]+)\$\$/g, (match, content) => {
-        // Display math: $$...$$ - double all single backslashes
-        const fixed = content.replace(/\\(?!\\)/g, '\\\\');
-        if (fixed !== content) {
-          console.log('[LLMService] Fixed display math:', content, '->', fixed);
-          latexFixCount++;
-        }
-        return `$$${fixed}$$`;
-      });
 
-      rawContent = rawContent.replace(/\$([^$]+)\$/g, (match, content) => {
-        // Inline math: $...$ - double all single backslashes
-        const fixed = content.replace(/\\(?!\\)/g, '\\\\');
-        if (fixed !== content) {
-          console.log('[LLMService] Fixed inline math:', content, '->', fixed);
-          latexFixCount++;
-        }
-        return `$${fixed}$`;
-      });
+      // First, let's try to parse as-is
+      let needsFix = false;
+      try {
+        JSON.parse(rawContent);
+        console.log('[LLMService] JSON is already valid, no LaTeX fix needed');
+      } catch (e) {
+        needsFix = true;
+        console.log('[LLMService] JSON parse failed, attempting LaTeX fixes');
+      }
 
-      if (latexFixCount > 0) {
-        console.log(`[LLMService] Applied LaTeX fixes to ${latexFixCount} expressions`);
-      } else {
-        console.log('[LLMService] No LaTeX expressions needed fixing');
+      if (needsFix) {
+        // Only apply fixes if JSON is invalid
+        // Replace improperly escaped backslashes in LaTeX expressions
+        rawContent = rawContent.replace(/\$\$([^$]+)\$\$/g, (match, content) => {
+          // Display math: $$...$$ - ensure proper escaping
+          // Replace single backslashes with double backslashes for JSON
+          const fixed = content.replace(/\\([a-zA-Z]+)/g, '\\\\$1');
+          if (fixed !== content) {
+            console.log('[LLMService] Fixed display math:', content.substring(0, 50), '->', fixed.substring(0, 50));
+            latexFixCount++;
+          }
+          return `$$${fixed}$$`;
+        });
+
+        rawContent = rawContent.replace(/\$([^$]+)\$/g, (match, content) => {
+          // Inline math: $...$ - ensure proper escaping
+          const fixed = content.replace(/\\([a-zA-Z]+)/g, '\\\\$1');
+          if (fixed !== content) {
+            console.log('[LLMService] Fixed inline math:', content.substring(0, 50), '->', fixed.substring(0, 50));
+            latexFixCount++;
+          }
+          return `$${fixed}$`;
+        });
+
+        if (latexFixCount > 0) {
+          console.log(`[LLMService] Applied LaTeX fixes to ${latexFixCount} expressions`);
+        }
       }
 
       let data: LLMQuestionResponse;
