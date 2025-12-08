@@ -5,9 +5,6 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
 
 // pdf-parse 1.x has a simple default export
 const pdfParse = require('pdf-parse');

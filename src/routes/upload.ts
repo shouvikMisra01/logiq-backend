@@ -3,16 +3,12 @@ import { Router, Request, Response } from "express";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
-import { fileURLToPath } from "url";
-import { v4 as uuidv4 } from "uuid";
 
 import { collections } from "../config/database";
 import { ObjectId } from "mongodb";
 import { SyllabusService } from "../services/syllabusService";
 
 const router = Router();
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // Folder to store PDFs (./pdfs at project root by default)
 const PDF_FOLDER =
