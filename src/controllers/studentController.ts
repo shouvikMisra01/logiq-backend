@@ -79,3 +79,15 @@ export const deleteStudent = async (req: Request, res: Response): Promise<void |
     res.status(500).json({ error: error.message });
   }
 };
+
+export const getDashboardStats = async (req: Request, res: Response): Promise<void | Response> => {
+  try {
+    const stats = await StudentService.getDashboardStats(req.params.id);
+    res.json(stats);
+  } catch (error: any) {
+    if (error.message === 'Student not found') {
+      return res.status(404).json({ error: error.message });
+    }
+    res.status(500).json({ error: error.message });
+  }
+};

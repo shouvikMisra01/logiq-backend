@@ -71,7 +71,9 @@ export async function closeDB(): Promise<void> {
 export const collections = {
   schools: () => getCollection('schools'),
   students: () => getCollection('students'),
-  admins: () => getCollection('admins'), // Super admins and school admins
+  super_admins: () => getCollection('super_admins'), // Super admins - full platform access
+  school_admins: () => getCollection('school_admins'), // School admins - school-specific access
+  admins: () => getCollection('admins'), // DEPRECATED: Use super_admins or school_admins instead
   chapters: () => getCollection('chapters'),
   syllabi: () => getCollection('syllabi'),
   pdf_documents: () => getCollection('pdf_documents'),
@@ -83,4 +85,8 @@ export const collections = {
   question_sets: () => getCollection('question_sets'),
   question_set_attempts: () => getCollection('question_set_attempts'),
   student_skill_stats: () => getCollection('student_skill_stats'),
+
+  // Teacher management collections
+  teachers: () => getCollection('teachers'),
+  teacher_assignments: () => getCollection('teacher_assignments'),
 };

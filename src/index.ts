@@ -15,6 +15,9 @@ import syllabusRoutes from './routes/syllabus';
 import { connectDB } from './config/database';
 import uploadRoutes from "./routes/upload";
 import chaptersRoutes from "./routes/chapters";
+import teacherRoutes from './routes/teachers';
+import passwordRoutes from './routes/password';
+import schoolAdminRoutes from './routes/schoolAdmin';
 
 const app: Application = express();
 const PORT: number = parseInt(process.env.PORT || '5000');
@@ -26,6 +29,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api', passwordRoutes);
 app.use('/api/data', dataRoutes);
 app.use('/api/schools', schoolRoutes);
 app.use('/api/students', studentRoutes);
@@ -35,7 +39,8 @@ app.use('/api/quiz-v2', newQuizRoutes); // New redesigned quiz API
 app.use('/api/syllabus', syllabusRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/chapters", chaptersRoutes);
-
+app.use('/api', teacherRoutes);
+app.use('/api/school-admin', schoolAdminRoutes);
 
 // Health check
 app.get('/api/health', (req: Request, res: Response) => {

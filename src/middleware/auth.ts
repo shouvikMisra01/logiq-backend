@@ -11,7 +11,7 @@ export interface AuthRequest extends Request {
     userId: string;
     email: string;
     name: string;
-    role: 'super_admin' | 'school_admin' | 'student' | 'parent';
+    role: 'super_admin' | 'school_admin' | 'student' | 'parent' | 'teacher';
     schoolId?: string;
     classNumber?: number;
     classLabel?: string;

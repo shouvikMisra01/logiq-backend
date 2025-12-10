@@ -185,21 +185,63 @@ export class SchoolService {
   }
 
   /**
-   * Delete a school
+   * Delete a school and all related data (CASCADE DELETE)
    */
   static async deleteSchool(schoolId: string): Promise<ServiceResponse> {
     const schoolsCol = collections.schools();
+    const schoolAdminsCol = collections.school_admins();
+    const teachersCol = collections.teachers();
+    const studentsCol = collections.students();
+    const parentsCol = collections.parents();
+    const teacherAssignmentsCol = collections.teacher_assignments();
 
+    // Check if school exists
     const school = await schoolsCol.findOne({ school_id: schoolId });
     if (!school) {
       throw new Error('School not found');
     }
 
+    // CASCADE DELETE - Delete all related data
+    console.log(`🗑️  Starting cascade delete for school: ${schoolId}`);
+
+    // 1. Delete all parents of students in this school
+    const parentsResult = await parentsCol.deleteMany({ school_id: schoolId });
+    console.log(`   ✓ Deleted ${parentsResult.deletedCount} parents`);
+
+    // 2. Delete all students in this school
+    const studentsResult = await studentsCol.deleteMany({ school_id: schoolId });
+    console.log(`   ✓ Deleted ${studentsResult.deletedCount} students`);
+
+    // 3. Delete all teacher assignments for this school's teachers
+    const teachers = await teachersCol.find({ school_id: schoolId }).toArray();
+    const teacherIds = teachers.map(t => t.teacher_id);
+
+    let assignmentsDeleted = 0;
+    if (teacherIds.length > 0) {
+      const assignmentsResult = await teacherAssignmentsCol.deleteMany({
+        teacher_id: { $in: teacherIds }
+      });
+      assignmentsDeleted = assignmentsResult.deletedCount;
+    }
+    console.log(`   ✓ Deleted ${assignmentsDeleted} teacher assignments`);
+
+    // 4. Delete all teachers in this school
+    const teachersResult = await teachersCol.deleteMany({ school_id: schoolId });
+    console.log(`   ✓ Deleted ${teachersResult.deletedCount} teachers`);
+
+    // 5. Delete school admin
+    const schoolAdminsResult = await schoolAdminsCol.deleteMany({ school_id: schoolId });
+    console.log(`   ✓ Deleted ${schoolAdminsResult.deletedCount} school admins`);
+
+    // 6. Finally, delete the school itself
     await schoolsCol.deleteOne({ school_id: schoolId });
+    console.log(`   ✓ Deleted school: ${schoolId}`);
+
+    console.log(`✅ Cascade delete completed for school: ${schoolId}`);
 
     return {
       success: true,
-      message: 'School deleted successfully',
+      message: `School and all related data deleted successfully. Deleted: ${studentsResult.deletedCount} students, ${parentsResult.deletedCount} parents, ${teachersResult.deletedCount} teachers, ${assignmentsDeleted} assignments, ${schoolAdminsResult.deletedCount} admins`,
     };
   }
 }

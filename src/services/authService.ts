@@ -16,7 +16,7 @@ const JWT_EXPIRES_IN = '7d';
 
 // ----------------- Types & Interfaces -----------------
 
-export type UserRole = 'super_admin' | 'school_admin' | 'student' | 'parent';
+export type UserRole = 'super_admin' | 'school_admin' | 'student' | 'parent' | 'teacher';
 
 export interface Parent {
   _id: ObjectId;
@@ -137,38 +137,67 @@ export class AuthService {
       };
     }
 
-    // 2) Try to find user in admins collection
-    const adminsCol = collections.admins();
-    const admin = await adminsCol.findOne({ email });
+    // 2) Try to find user in super_admins collection
+    const superAdminsCol = collections.super_admins();
+    const superAdmin = await superAdminsCol.findOne({ email });
 
-    if (admin) {
+    if (superAdmin) {
       // Verify password
-      if (!this.verifyPassword(password, admin.password_hash)) {
+      if (!this.verifyPassword(password, superAdmin.password_hash)) {
         throw new Error('Invalid email or password');
       }
 
-      // Generate JWT for admin
+      // Generate JWT for super admin
       const token = this.generateToken({
-        userId: admin.admin_id,
-        email: admin.email,
-        name: admin.name,
-        role: admin.role,
-        schoolId: admin.school_id,
+        userId: superAdmin.admin_id,
+        email: superAdmin.email,
+        name: superAdmin.name,
+        role: 'super_admin',
       });
 
       return {
         token,
         user: {
-          userId: admin.admin_id,
-          name: admin.name,
-          email: admin.email,
-          role: admin.role,
-          schoolId: admin.school_id,
+          userId: superAdmin.admin_id,
+          name: superAdmin.name,
+          email: superAdmin.email,
+          role: 'super_admin',
         },
       };
     }
 
-    // 3) Try to find user in parents collection
+    // 3) Try to find user in school_admins collection
+    const schoolAdminsCol = collections.school_admins();
+    const schoolAdmin = await schoolAdminsCol.findOne({ email });
+
+    if (schoolAdmin) {
+      // Verify password
+      if (!this.verifyPassword(password, schoolAdmin.password_hash)) {
+        throw new Error('Invalid email or password');
+      }
+
+      // Generate JWT for school admin
+      const token = this.generateToken({
+        userId: schoolAdmin.admin_id,
+        email: schoolAdmin.email,
+        name: schoolAdmin.name,
+        role: 'school_admin',
+        schoolId: schoolAdmin.school_id,
+      });
+
+      return {
+        token,
+        user: {
+          userId: schoolAdmin.admin_id,
+          name: schoolAdmin.name,
+          email: schoolAdmin.email,
+          role: 'school_admin',
+          schoolId: schoolAdmin.school_id,
+        },
+      };
+    }
+
+    // 4) Try to find user in parents collection
     const parentsCol = collections.parents();
     const parent: Parent | null = await parentsCol.findOne({ email }) as Parent | null;
 
@@ -203,6 +232,37 @@ export class AuthService {
           classNumber: parent.child_class_number,
           childStudentId: parent.child_student_id,
           childName: parent.child_name,
+        },
+      };
+    }
+
+    // 5) Try to find user in teachers collection
+    const teachersCol = collections.teachers();
+    const teacher = await teachersCol.findOne({ email });
+
+    if (teacher) {
+      // Verify password
+      if (!this.verifyPassword(password, teacher.password_hash)) {
+        throw new Error('Invalid email or password');
+      }
+
+      // Generate JWT for teacher (all teacher types are authenticated as 'teacher' role)
+      const token = this.generateToken({
+        userId: teacher.teacher_id,
+        email: teacher.email,
+        name: teacher.name,
+        role: 'teacher',
+        schoolId: teacher.school_id,
+      });
+
+      return {
+        token,
+        user: {
+          userId: teacher.teacher_id,
+          name: teacher.name,
+          email: teacher.email,
+          role: 'teacher',
+          schoolId: teacher.school_id,
         },
       };
     }
