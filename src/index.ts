@@ -22,8 +22,29 @@ import schoolAdminRoutes from './routes/schoolAdmin';
 const app: Application = express();
 const PORT: number = parseInt(process.env.PORT || '5000');
 
-// Middleware
-app.use(cors());
+// CORS Configuration for Local and Production
+const allowedOrigins = [
+  'http://localhost:3000',        // Local development
+  'https://logiq.zetaq.in',       // Production frontend
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`⚠️ Blocked request from unauthorized origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
