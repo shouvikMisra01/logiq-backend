@@ -32,9 +32,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# PDF uploads (optionally keep pdfs/ directory structure)
-pdfs/*.pdf
-!pdfs/README.md
+# PDF uploads - COMMITTED TO REPO FOR MVP
+# All PDFs in pdfs/ folder are tracked and deployed to production
+# !pdfs/*.pdf
 
 # Temporary files
 tmp/
