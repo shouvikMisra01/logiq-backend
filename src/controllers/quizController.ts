@@ -8,8 +8,105 @@ import { QuizService } from '../services/quizService';
 import { StudyPlanService } from '../services/studyPlanService';
 
 /**
+ * Validation helper for quiz generation payload
+ */
+interface ValidationError {
+  field: string;
+  message: string;
+  receivedValue: any;
+  expectedType: string;
+}
+
+function validateQuizPayload(body: any): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  // studentId: required, non-empty string
+  if (!body.studentId || typeof body.studentId !== 'string' || body.studentId.trim() === '') {
+    errors.push({
+      field: 'studentId',
+      message: 'Required field must be a non-empty string',
+      receivedValue: body.studentId,
+      expectedType: 'string',
+    });
+  }
+
+  // schoolId: required, non-empty string
+  if (!body.schoolId || typeof body.schoolId !== 'string' || body.schoolId.trim() === '') {
+    errors.push({
+      field: 'schoolId',
+      message: 'Required field must be a non-empty string',
+      receivedValue: body.schoolId,
+      expectedType: 'string',
+    });
+  }
+
+  // classNumber: required, positive number
+  if (!body.classNumber || typeof body.classNumber !== 'number' || body.classNumber <= 0) {
+    errors.push({
+      field: 'classNumber',
+      message: 'Required field must be a positive number (e.g., 9, 10, 11)',
+      receivedValue: body.classNumber,
+      expectedType: 'number',
+    });
+  }
+
+  // subject: required, non-empty string
+  if (!body.subject || typeof body.subject !== 'string' || body.subject.trim() === '') {
+    errors.push({
+      field: 'subject',
+      message: 'Required field must be a non-empty string',
+      receivedValue: body.subject,
+      expectedType: 'string',
+    });
+  }
+
+  // chapter: required, non-empty string
+  if (!body.chapter || typeof body.chapter !== 'string' || body.chapter.trim() === '') {
+    errors.push({
+      field: 'chapter',
+      message: 'Required field must be a non-empty string',
+      receivedValue: body.chapter,
+      expectedType: 'string',
+    });
+  }
+
+  // topic: required, non-empty string
+  if (!body.topic || typeof body.topic !== 'string' || body.topic.trim() === '') {
+    errors.push({
+      field: 'topic',
+      message: 'Required field must be a non-empty string',
+      receivedValue: body.topic,
+      expectedType: 'string',
+    });
+  }
+
+  // difficulty: optional string
+  if (body.difficulty !== undefined && typeof body.difficulty !== 'string') {
+    errors.push({
+      field: 'difficulty',
+      message: 'Optional field must be a string if provided',
+      receivedValue: body.difficulty,
+      expectedType: 'string',
+    });
+  }
+
+  return errors;
+}
+
+/**
  * Generate a new quiz
  * POST /api/quiz/generate
+ *
+ * Expected payload (camelCase):
+ * {
+ *   studentId: string,
+ *   schoolId: string,
+ *   classNumber: number,
+ *   subject: string,
+ *   chapter: string,
+ *   topic: string,
+ *   difficulty?: string
+ * }
  */
 export const generateQuiz = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -18,52 +115,23 @@ export const generateQuiz = async (req: Request, res: Response): Promise<void> =
       timestamp: new Date().toISOString(),
     });
 
+    // Validate payload
+    const validationErrors = validateQuizPayload(req.body);
+    if (validationErrors.length > 0) {
+      console.error('[QuizController] Validation failed:', validationErrors);
+      res.status(400).json({
+        error: 'Invalid request payload',
+        validationErrors,
+        hint: 'Expected camelCase payload with: studentId (string), schoolId (string), classNumber (number), subject (string), chapter (string), topic (string), difficulty? (string)',
+      });
+      return;
+    }
+
     const { studentId, schoolId, classNumber, subject, chapter, topic } = req.body;
-
-    // Validate required fields
-    if (!studentId || typeof studentId !== 'string' || studentId.trim() === '') {
-      console.error('[QuizController] Invalid studentId:', studentId);
-      res.status(400).json({
-        error: 'Invalid or missing studentId (must be non-empty string)',
-      });
-      return;
-    }
-
-    if (!schoolId || typeof schoolId !== 'string' || schoolId.trim() === '') {
-      console.error('[QuizController] Invalid schoolId:', schoolId);
-      res.status(400).json({
-        error: 'Invalid or missing schoolId (must be non-empty string)',
-      });
-      return;
-    }
-
-    if (!classNumber || typeof classNumber !== 'number' || classNumber <= 0) {
-      console.error('[QuizController] Invalid classNumber:', classNumber);
-      res.status(400).json({
-        error: 'Invalid or missing classNumber (must be positive number)',
-      });
-      return;
-    }
-
-    if (!subject || typeof subject !== 'string' || subject.trim() === '') {
-      console.error('[QuizController] Invalid subject:', subject);
-      res.status(400).json({
-        error: 'Invalid or missing subject (must be non-empty string)',
-      });
-      return;
-    }
-
-    if (!chapter || typeof chapter !== 'string' || chapter.trim() === '') {
-      console.error('[QuizController] Invalid chapter:', chapter);
-      res.status(400).json({
-        error: 'Invalid or missing chapter (must be non-empty string)',
-      });
-      return;
-    }
 
     console.log('[QuizController] Validation passed, calling QuizService.generateQuiz');
 
-    // Convert classNumber to class_id format for internal services
+    // Convert camelCase API contract to internal snake_case format (boundary translation)
     const class_id = `class ${classNumber}`;
 
     const quizAttempt = await QuizService.generateQuiz({
