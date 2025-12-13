@@ -15,9 +15,27 @@ export class LLMService {
   private static getOpenAIClient(): OpenAI {
     if (!this.openaiClient) {
       const apiKey = process.env.OPENAI_API_KEY;
+
+      // API Key validation
       if (!apiKey) {
-        throw new Error('OPENAI_API_KEY environment variable is not set');
+        const errMsg = 'OPENAI_API_KEY environment variable is not set';
+        console.error('[LLMService] Fatal error:', errMsg);
+        throw new Error(errMsg);
       }
+
+      if (apiKey.trim().length === 0) {
+        const errMsg = 'OPENAI_API_KEY is empty';
+        console.error('[LLMService] Fatal error:', errMsg);
+        throw new Error(errMsg);
+      }
+
+      if (!apiKey.startsWith('sk-')) {
+        const errMsg = 'OPENAI_API_KEY does not start with "sk-" (invalid format)';
+        console.error('[LLMService] Fatal error:', errMsg);
+        throw new Error(errMsg);
+      }
+
+      console.log('[LLMService] OpenAI client initialized with valid API key');
       this.openaiClient = new OpenAI({ apiKey });
     }
     return this.openaiClient;
@@ -85,6 +103,28 @@ export class LLMService {
     chapter: string,
     classNumber: number
   ): Promise<Question[]> {
+    console.log('[LLMService] generateQuestionsFromText called:', {
+      classId,
+      subject,
+      chapter,
+      classNumber,
+      textLength: chapterText.length,
+    });
+
+    // Input validation
+    if (!chapterText || typeof chapterText !== 'string') {
+      const errMsg = 'Chapter text must be a non-empty string';
+      console.error('[LLMService] Input validation failed:', errMsg);
+      throw new Error(errMsg);
+    }
+
+    const trimmedText = chapterText.trim();
+    if (trimmedText.length < 100) {
+      const errMsg = `Chapter text is too short (${trimmedText.length} chars). Minimum 100 characters required`;
+      console.error('[LLMService] Input validation failed:', errMsg);
+      throw new Error(errMsg);
+    }
+
     const client = this.getOpenAIClient();
 
     // Determine class level description
@@ -221,19 +261,62 @@ Generate EXACTLY 10 questions that:
 Return ONLY the JSON with questions.`;
 
     try {
-      const response = await client.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.3,
-      });
+      console.log('[LLMService] Calling OpenAI API for question generation');
+      let response;
+      try {
+        response = await client.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.3,
+        });
+      } catch (apiError: any) {
+        // Network and API error handling
+        console.error('[LLMService] OpenAI API error:', {
+          status: apiError.status,
+          code: apiError.code,
+          message: apiError.message,
+        });
+
+        if (apiError.status === 401) {
+          throw new Error('OpenAI authentication failed (401): Invalid or expired API key');
+        } else if (apiError.status === 429) {
+          throw new Error('OpenAI rate limit exceeded (429): Too many requests, please retry later');
+        } else if (apiError.status === 500) {
+          throw new Error('OpenAI server error (500): Service temporarily unavailable');
+        } else if (apiError.status === 503) {
+          throw new Error('OpenAI service unavailable (503): Service is down for maintenance');
+        } else if (apiError.code === 'ENOTFOUND') {
+          throw new Error('Network error: Cannot reach OpenAI service (DNS resolution failed)');
+        } else if (apiError.code === 'ECONNREFUSED') {
+          throw new Error('Network error: Connection refused by OpenAI service');
+        }
+        throw apiError;
+      }
+
+      // Response validation
+      if (!response) {
+        const errMsg = 'No response received from OpenAI API';
+        console.error('[LLMService]', errMsg);
+        throw new Error(errMsg);
+      }
+
+      if (!response.choices || response.choices.length === 0) {
+        const errMsg = 'OpenAI response has no choices';
+        console.error('[LLMService]', errMsg);
+        throw new Error(errMsg);
+      }
 
       let rawContent = response.choices[0].message.content;
       if (!rawContent) {
-        throw new Error('Empty response from LLM');
+        const errMsg = 'Empty response content from OpenAI';
+        console.error('[LLMService]', errMsg);
+        throw new Error(errMsg);
       }
+
+      console.log('[LLMService] Received response from OpenAI, length:', rawContent.length);
 
       // Clean up markdown code blocks
       rawContent = rawContent.trim();
@@ -288,12 +371,15 @@ Return ONLY the JSON with questions.`;
         }
       }
 
+      // JSON parsing with detailed error handling
       let data: LLMQuestionResponse;
       try {
+        console.log('[LLMService] Attempting to parse JSON response');
         data = JSON.parse(rawContent);
       } catch (parseError: any) {
-        console.error('[LLMService] JSON parse failed even after LaTeX fix attempt');
-        console.error('[LLMService] Error:', parseError.message);
+        console.error('[LLMService] JSON parsing failed');
+        console.error('[LLMService] Parse error message:', parseError.message);
+        console.error('[LLMService] First 500 chars of content:', rawContent.substring(0, 500));
         // Log a snippet of the content around the error position if available
         if (parseError.message.includes('position')) {
           const posMatch = parseError.message.match(/position (\d+)/);
@@ -301,14 +387,50 @@ Return ONLY the JSON with questions.`;
             const pos = parseInt(posMatch[1]);
             const start = Math.max(0, pos - 100);
             const end = Math.min(rawContent.length, pos + 100);
-            console.error('[LLMService] Context around error:', rawContent.substring(start, end));
+            console.error('[LLMService] Context around parse error (pos', pos, '):', rawContent.substring(start, end));
           }
         }
-        throw parseError;
+        throw new Error(`Failed to parse LLM response as JSON: ${parseError.message}`);
       }
+
+      // Question structure validation
+      console.log('[LLMService] Validating question structure');
+      if (!data || !Array.isArray(data.questions)) {
+        const errMsg = 'Invalid response structure: missing or invalid "questions" array';
+        console.error('[LLMService]', errMsg);
+        throw new Error(errMsg);
+      }
+
+      if (data.questions.length === 0) {
+        const errMsg = 'No questions generated in response';
+        console.error('[LLMService]', errMsg);
+        throw new Error(errMsg);
+      }
+
+      console.log('[LLMService] Response contains', data.questions.length, 'questions');
+
       const questions: Question[] = [];
 
-      for (const q of data.questions) {
+      for (let i = 0; i < data.questions.length; i++) {
+        const q = data.questions[i];
+
+        // Validate each question structure
+        if (!q.id) {
+          console.warn('[LLMService] Question', i, 'missing id');
+        }
+        if (!q.question) {
+          console.warn('[LLMService] Question', i, 'missing question text');
+        }
+        if (!q.options || !Array.isArray(q.options) || q.options.length < 4) {
+          console.warn('[LLMService] Question', i, 'has invalid options:', q.options?.length);
+        }
+        if (typeof q.correct_option_index !== 'number' || q.correct_option_index < 0 || q.correct_option_index > 3) {
+          console.warn('[LLMService] Question', i, 'has invalid correct_option_index:', q.correct_option_index);
+        }
+        if (!q.features || typeof q.features !== 'object') {
+          console.warn('[LLMService] Question', i, 'missing features');
+        }
+
         const difficultyData = this.computeDifficulty(q.features);
 
         questions.push({
@@ -321,8 +443,10 @@ Return ONLY the JSON with questions.`;
         });
       }
 
+      console.log('[LLMService] Successfully generated', questions.length, 'questions');
       return questions;
     } catch (error: any) {
+      console.error('[LLMService] Fatal error in generateQuestionsFromText:', error.message);
       throw new Error(`Failed to generate questions: ${error.message}`);
     }
   }
@@ -405,19 +529,55 @@ Rules:
     );
 
     try {
-      const response = await client.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.4,
-      });
+      console.log('[LLMService] Calling OpenAI API for study plan generation');
+      let response;
+      try {
+        response = await client.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.4,
+        });
+      } catch (apiError: any) {
+        console.error('[LLMService] OpenAI API error in generateStudyPlan:', {
+          status: apiError.status,
+          code: apiError.code,
+          message: apiError.message,
+        });
+
+        if (apiError.status === 401) {
+          throw new Error('OpenAI authentication failed (401): Invalid or expired API key');
+        } else if (apiError.status === 429) {
+          throw new Error('OpenAI rate limit exceeded (429): Too many requests, please retry later');
+        } else if (apiError.status === 500) {
+          throw new Error('OpenAI server error (500): Service temporarily unavailable');
+        } else if (apiError.status === 503) {
+          throw new Error('OpenAI service unavailable (503): Service is down for maintenance');
+        } else if (apiError.code === 'ENOTFOUND') {
+          throw new Error('Network error: Cannot reach OpenAI service (DNS resolution failed)');
+        } else if (apiError.code === 'ECONNREFUSED') {
+          throw new Error('Network error: Connection refused by OpenAI service');
+        }
+        throw apiError;
+      }
+
+      // Response validation
+      if (!response || !response.choices || response.choices.length === 0) {
+        const errMsg = 'Invalid response from OpenAI';
+        console.error('[LLMService]', errMsg);
+        throw new Error(errMsg);
+      }
 
       let rawContent = response.choices[0].message.content;
       if (!rawContent) {
-        throw new Error('Empty response from LLM');
+        const errMsg = 'Empty response content from OpenAI';
+        console.error('[LLMService]', errMsg);
+        throw new Error(errMsg);
       }
+
+      console.log('[LLMService] Received study plan response, length:', rawContent.length);
 
       // Clean up markdown code blocks
       rawContent = rawContent.trim();
@@ -425,8 +585,22 @@ Rules:
         rawContent = rawContent.replace(/^```(?:json)?\\n?/, '').replace(/```$/, '').trim();
       }
 
-      return JSON.parse(rawContent);
+      // JSON parsing with error context
+      let data;
+      try {
+        console.log('[LLMService] Parsing study plan JSON');
+        data = JSON.parse(rawContent);
+      } catch (parseError: any) {
+        console.error('[LLMService] Failed to parse study plan JSON');
+        console.error('[LLMService] Error:', parseError.message);
+        console.error('[LLMService] First 300 chars:', rawContent.substring(0, 300));
+        throw new Error(`Failed to parse study plan JSON: ${parseError.message}`);
+      }
+
+      console.log('[LLMService] Study plan generated successfully');
+      return data;
     } catch (error: any) {
+      console.error('[LLMService] Fatal error in generateStudyPlan:', error.message);
       throw new Error(`Failed to generate study plan: ${error.message}`);
     }
   }

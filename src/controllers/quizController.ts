@@ -13,21 +13,67 @@ import { StudyPlanService } from '../services/studyPlanService';
  */
 export const generateQuiz = async (req: Request, res: Response): Promise<void> => {
   try {
+    console.log('[QuizController] Received quiz generation request:', {
+      body: req.body,
+      timestamp: new Date().toISOString(),
+    });
+
     const { student_id, school_id, class_id, subject, chapter } = req.body;
 
-    if (!student_id || !school_id || !class_id || !subject || !chapter) {
+    // Validate required fields are present and non-empty strings
+    if (!student_id || typeof student_id !== 'string' || student_id.trim() === '') {
+      console.error('[QuizController] Invalid student_id:', student_id);
       res.status(400).json({
-        error: 'Missing required fields: student_id, school_id, class_id, subject, chapter',
+        error: 'Invalid or missing student_id (must be non-empty string)',
       });
       return;
     }
 
+    if (!school_id || typeof school_id !== 'string' || school_id.trim() === '') {
+      console.error('[QuizController] Invalid school_id:', school_id);
+      res.status(400).json({
+        error: 'Invalid or missing school_id (must be non-empty string)',
+      });
+      return;
+    }
+
+    if (!class_id || typeof class_id !== 'string' || class_id.trim() === '') {
+      console.error('[QuizController] Invalid class_id:', class_id);
+      res.status(400).json({
+        error: 'Invalid or missing class_id (must be non-empty string)',
+      });
+      return;
+    }
+
+    if (!subject || typeof subject !== 'string' || subject.trim() === '') {
+      console.error('[QuizController] Invalid subject:', subject);
+      res.status(400).json({
+        error: 'Invalid or missing subject (must be non-empty string)',
+      });
+      return;
+    }
+
+    if (!chapter || typeof chapter !== 'string' || chapter.trim() === '') {
+      console.error('[QuizController] Invalid chapter:', chapter);
+      res.status(400).json({
+        error: 'Invalid or missing chapter (must be non-empty string)',
+      });
+      return;
+    }
+
+    console.log('[QuizController] Validation passed, calling QuizService.generateQuiz');
+
     const quizAttempt = await QuizService.generateQuiz({
-      student_id,
-      school_id,
-      class_id,
-      subject,
-      chapter,
+      student_id: student_id.trim(),
+      school_id: school_id.trim(),
+      class_id: class_id.trim(),
+      subject: subject.trim(),
+      chapter: chapter.trim(),
+    });
+
+    console.log('[QuizController] Quiz generated successfully:', {
+      quiz_id: quizAttempt.quiz_id,
+      question_count: quizAttempt.questions?.length || 0,
     });
 
     // Check if this is an incomplete quiz being returned
@@ -58,8 +104,59 @@ export const generateQuiz = async (req: Request, res: Response): Promise<void> =
 
     res.status(201).json(response);
   } catch (error: any) {
-    console.error('Error generating quiz:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate quiz' });
+    console.error('[QuizController] Error generating quiz:', {
+      error: error.message,
+      stack: error.stack,
+      name: error.name,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Return specific error messages based on error type
+    if (error.message?.includes('No syllabus found')) {
+      res.status(404).json({
+        error: error.message,
+        details: 'The requested syllabus content is not available in the system',
+      });
+      return;
+    }
+
+    if (error.message?.includes('OPENAI_API_KEY')) {
+      res.status(500).json({
+        error: 'OpenAI API configuration error',
+        details: 'The AI service is not properly configured',
+      });
+      return;
+    }
+
+    if (error.message?.includes('PDF not found') || error.message?.includes('Source PDF')) {
+      res.status(404).json({
+        error: 'Content not found',
+        details: error.message,
+      });
+      return;
+    }
+
+    if (error.message?.includes('Failed to extract text from PDF')) {
+      res.status(500).json({
+        error: 'PDF processing error',
+        details: 'Unable to extract content from the study material',
+      });
+      return;
+    }
+
+    if (error.message?.includes('Failed to generate questions')) {
+      res.status(500).json({
+        error: 'Question generation failed',
+        details: error.message,
+      });
+      return;
+    }
+
+    // Generic error fallback
+    res.status(500).json({
+      error: 'Failed to generate quiz',
+      details: error.message || 'An unexpected error occurred',
+    });
   }
 };
 

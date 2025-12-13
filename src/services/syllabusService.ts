@@ -171,34 +171,117 @@ export class SyllabusService {
     subjectName: string,
     chapterId?: string
   ): Promise<string> {
-    const syllabusCol = collections.syllabi();
-    const syllabus = await syllabusCol.findOne({
+    console.log('[SyllabusService] getChapterText called:', {
       classNumber,
-      subjectName: subjectName.toLowerCase(),
+      subjectName,
+      chapterId,
     });
 
-    if (!syllabus) {
-      throw new Error(`No syllabus found for Class ${classNumber} - ${subjectName}`);
+    try {
+      // Database collection validation
+      const syllabusCol = collections.syllabi();
+      if (!syllabusCol) {
+        const errMsg = 'Syllabi collection is not initialized';
+        console.error('[SyllabusService]', errMsg);
+        throw new Error(errMsg);
+      }
+
+      // Fetch syllabus
+      let syllabus;
+      try {
+        syllabus = await syllabusCol.findOne({
+          classNumber,
+          subjectName: subjectName.toLowerCase(),
+        });
+      } catch (dbError: any) {
+        console.error('[SyllabusService] Database error fetching syllabus:', dbError.message);
+        throw new Error(`Database error: Failed to fetch syllabus: ${dbError.message}`);
+      }
+
+      // Null check for syllabus
+      if (!syllabus) {
+        const errMsg = `No syllabus found for Class ${classNumber} - ${subjectName}`;
+        console.error('[SyllabusService]', errMsg);
+        throw new Error(errMsg);
+      }
+
+      console.log('[SyllabusService] Found syllabus:', {
+        syllabusId: syllabus._id,
+        classNumber: syllabus.classNumber,
+        subjectName: syllabus.subjectName,
+      });
+
+      // Null check for sourcePdfId
+      if (!syllabus.sourcePdfId) {
+        const errMsg = 'Syllabus exists but has no source PDF linked';
+        console.error('[SyllabusService]', errMsg);
+        throw new Error(errMsg);
+      }
+
+      console.log('[SyllabusService] Source PDF ID:', syllabus.sourcePdfId);
+
+      // Fetch PDF document from chapters collection
+      const chaptersCol = collections.chapters();
+      if (!chaptersCol) {
+        const errMsg = 'Chapters collection is not initialized';
+        console.error('[SyllabusService]', errMsg);
+        throw new Error(errMsg);
+      }
+
+      let pdfDoc;
+      try {
+        pdfDoc = await chaptersCol.findOne({
+          documentId: syllabus.sourcePdfId,
+        });
+      } catch (dbError: any) {
+        console.error('[SyllabusService] Database error fetching PDF document:', dbError.message);
+        throw new Error(`Database error: Failed to fetch PDF metadata: ${dbError.message}`);
+      }
+
+      // Null check for pdfDoc
+      if (!pdfDoc) {
+        const errMsg = `Source PDF document not found (ID: ${syllabus.sourcePdfId})`;
+        console.error('[SyllabusService]', errMsg);
+        throw new Error(errMsg);
+      }
+
+      console.log('[SyllabusService] Found PDF document:', {
+        documentId: pdfDoc.documentId,
+        filename: pdfDoc.stored_filename,
+      });
+
+      // Null check for stored_filename
+      if (!pdfDoc.stored_filename) {
+        const errMsg = 'PDF document exists but has no stored filename';
+        console.error('[SyllabusService]', errMsg);
+        throw new Error(errMsg);
+      }
+
+      const pdfPath = `pdfs/${pdfDoc.stored_filename}`;
+      console.log('[SyllabusService] Extracting text from PDF:', pdfPath);
+
+      let fullText;
+      try {
+        fullText = await PDFService.extractTextFromPDF(pdfPath);
+      } catch (pdfError: any) {
+        console.error('[SyllabusService] PDF extraction error:', pdfError.message);
+        throw new Error(`Failed to extract text from PDF: ${pdfError.message}`);
+      }
+
+      if (!fullText || fullText.trim().length === 0) {
+        const errMsg = 'PDF text extraction resulted in empty content';
+        console.error('[SyllabusService]', errMsg);
+        throw new Error(errMsg);
+      }
+
+      console.log('[SyllabusService] Successfully extracted', fullText.length, 'characters');
+
+      // If specific chapter requested, try to extract that section
+      // For now, return full text (you can improve this with better segmentation)
+      return fullText;
+    } catch (error: any) {
+      console.error('[SyllabusService] Fatal error in getChapterText:', error.message);
+      throw new Error(`Failed to get chapter text: ${error.message}`);
     }
-
-    // Get the source PDF and extract text
-    if (!syllabus.sourcePdfId) {
-      throw new Error('No source PDF linked to this syllabus');
-    }
-
-    const pdfDoc = await collections.chapters().findOne({
-      documentId: syllabus.sourcePdfId,
-    });
-
-    if (!pdfDoc) {
-      throw new Error('Source PDF not found');
-    }
-
-    const pdfPath = `pdfs/${pdfDoc.stored_filename}`;
-    const fullText = await PDFService.extractTextFromPDF(pdfPath);
-
-    // If specific chapter requested, try to extract that section
-    // For now, return full text (you can improve this with better segmentation)
-    return fullText;
   }
 }
