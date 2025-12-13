@@ -7,6 +7,7 @@ import { collections } from '../config/database';
 import { PDFService } from './pdfService';
 import { OpenAIService } from './openaiService';
 import { SyllabusDocument } from '../types/syllabus';
+import { getPdfPath } from '../utils/pathUtils';
 
 export class SyllabusService {
   /**
@@ -31,8 +32,9 @@ export class SyllabusService {
       filename: pdfDoc.stored_filename,
     });
 
-    // 2. Extract text from PDF
-    const pdfPath = `pdfs/${pdfDoc.stored_filename}`;
+    // 2. Extract text from PDF using ABSOLUTE path
+    const pdfPath = getPdfPath(pdfDoc.stored_filename);
+    console.log('[SyllabusService] Using absolute PDF path:', pdfPath);
     const pdfText = await PDFService.extractTextFromPDF(pdfPath);
 
     console.log('[SyllabusService] Extracted', pdfText.length, 'characters of text');
@@ -257,8 +259,10 @@ export class SyllabusService {
         throw new Error(errMsg);
       }
 
-      const pdfPath = `pdfs/${pdfDoc.stored_filename}`;
-      console.log('[SyllabusService] Extracting text from PDF:', pdfPath);
+      // Use ABSOLUTE path from path utility
+      const pdfPath = getPdfPath(pdfDoc.stored_filename);
+      console.log('[SyllabusService] Using absolute PDF path:', pdfPath);
+      console.log('[SyllabusService] Extracting text from PDF:', pdfDoc.stored_filename);
 
       let fullText;
       try {
