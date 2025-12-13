@@ -8,8 +8,40 @@ dotenv.config();
 
 import OpenAI from 'openai';
 
+/**
+ * Validate and retrieve OpenAI API key from environment
+ */
+function validateAndGetApiKey(): string {
+  console.log('[OpenAIService] Validating OpenAI API key');
+  const apiKey = process.env.OPENAI_API_KEY;
+
+  if (!apiKey) {
+    const errMsg = 'OPENAI_API_KEY environment variable is not set';
+    console.error('[OpenAIService] Fatal error:', errMsg);
+    throw new Error(errMsg);
+  }
+
+  if (apiKey.trim().length === 0) {
+    const errMsg = 'OPENAI_API_KEY is empty';
+    console.error('[OpenAIService] Fatal error:', errMsg);
+    throw new Error(errMsg);
+  }
+
+  if (!apiKey.startsWith('sk-')) {
+    const errMsg = 'OPENAI_API_KEY does not start with "sk-" (invalid format)';
+    console.error('[OpenAIService] Fatal error:', errMsg);
+    throw new Error(errMsg);
+  }
+
+  console.log('[OpenAIService] API key validation successful');
+  return apiKey;
+}
+
+// Validate API key at module load time
+const validatedApiKey = validateAndGetApiKey();
+
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: validatedApiKey,
 });
 
 export class OpenAIService {
@@ -74,24 +106,67 @@ ${pdfText.substring(0, 12000)}
 Parse and return structured JSON.`;
 
     try {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.2,
-        response_format: { type: 'json_object' },
-      });
+      console.log('[OpenAIService] Calling OpenAI API for syllabus parsing');
+      let response;
+      try {
+        response = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.2,
+          response_format: { type: 'json_object' },
+        });
+      } catch (apiError: any) {
+        console.error('[OpenAIService] OpenAI API error in parseSyllabusFromText:', {
+          status: apiError.status,
+          code: apiError.code,
+          message: apiError.message,
+        });
+
+        if (apiError.status === 401) {
+          throw new Error('OpenAI authentication failed (401): Invalid or expired API key');
+        } else if (apiError.status === 429) {
+          throw new Error('OpenAI rate limit exceeded (429): Too many requests, please retry later');
+        } else if (apiError.status === 500) {
+          throw new Error('OpenAI server error (500): Service temporarily unavailable');
+        } else if (apiError.status === 503) {
+          throw new Error('OpenAI service unavailable (503): Service is down for maintenance');
+        } else if (apiError.code === 'ENOTFOUND') {
+          throw new Error('Network error: Cannot reach OpenAI service (DNS resolution failed)');
+        } else if (apiError.code === 'ECONNREFUSED') {
+          throw new Error('Network error: Connection refused by OpenAI service');
+        }
+        throw apiError;
+      }
+
+      if (!response || !response.choices || response.choices.length === 0) {
+        const errMsg = 'Invalid response from OpenAI';
+        console.error('[OpenAIService]', errMsg);
+        throw new Error(errMsg);
+      }
 
       const content = response.choices[0].message.content;
       if (!content) {
-        throw new Error('Empty response from OpenAI');
+        const errMsg = 'Empty response content from OpenAI';
+        console.error('[OpenAIService]', errMsg);
+        throw new Error(errMsg);
       }
 
-      const parsed = JSON.parse(content);
+      console.log('[OpenAIService] Received syllabus response, parsing JSON');
+      let parsed;
+      try {
+        parsed = JSON.parse(content);
+      } catch (parseError: any) {
+        console.error('[OpenAIService] JSON parse error:', parseError.message);
+        throw new Error(`Failed to parse response JSON: ${parseError.message}`);
+      }
+
+      console.log('[OpenAIService] Syllabus parsed successfully');
       return parsed;
     } catch (error: any) {
+      console.error('[OpenAIService] Fatal error in parseSyllabusFromText:', error.message);
       throw new Error(`Failed to parse syllabus with AI: ${error.message}`);
     }
   }
@@ -155,28 +230,74 @@ ${chapterText.substring(0, 8000)}
 Generate exactly ${count} MCQ questions as JSON array.`;
 
     try {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.7,
-        response_format: { type: 'json_object' },
-      });
+      console.log('[OpenAIService] Calling OpenAI API for question generation');
+      let response;
+      try {
+        response = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.7,
+          response_format: { type: 'json_object' },
+        });
+      } catch (apiError: any) {
+        console.error('[OpenAIService] OpenAI API error in generateQuestions:', {
+          status: apiError.status,
+          code: apiError.code,
+          message: apiError.message,
+        });
+
+        if (apiError.status === 401) {
+          throw new Error('OpenAI authentication failed (401): Invalid or expired API key');
+        } else if (apiError.status === 429) {
+          throw new Error('OpenAI rate limit exceeded (429): Too many requests, please retry later');
+        } else if (apiError.status === 500) {
+          throw new Error('OpenAI server error (500): Service temporarily unavailable');
+        } else if (apiError.status === 503) {
+          throw new Error('OpenAI service unavailable (503): Service is down for maintenance');
+        } else if (apiError.code === 'ENOTFOUND') {
+          throw new Error('Network error: Cannot reach OpenAI service (DNS resolution failed)');
+        } else if (apiError.code === 'ECONNREFUSED') {
+          throw new Error('Network error: Connection refused by OpenAI service');
+        }
+        throw apiError;
+      }
+
+      if (!response || !response.choices || response.choices.length === 0) {
+        const errMsg = 'Invalid response from OpenAI';
+        console.error('[OpenAIService]', errMsg);
+        throw new Error(errMsg);
+      }
 
       const content = response.choices[0].message.content;
       if (!content) {
-        throw new Error('Empty response from OpenAI');
+        const errMsg = 'Empty response content from OpenAI';
+        console.error('[OpenAIService]', errMsg);
+        throw new Error(errMsg);
       }
 
-      const parsed = JSON.parse(content);
+      console.log('[OpenAIService] Received questions response, parsing JSON');
+      let parsed;
+      try {
+        parsed = JSON.parse(content);
+      } catch (parseError: any) {
+        console.error('[OpenAIService] JSON parse error:', parseError.message);
+        throw new Error(`Failed to parse response JSON: ${parseError.message}`);
+      }
 
       // Handle both array and object with questions key
       const questions = Array.isArray(parsed) ? parsed : parsed.questions || [];
 
+      if (questions.length === 0) {
+        console.warn('[OpenAIService] No questions found in response');
+      }
+
+      console.log('[OpenAIService] Generated', questions.length, 'questions');
       return questions.slice(0, count);
     } catch (error: any) {
+      console.error('[OpenAIService] Fatal error in generateQuestions:', error.message);
       throw new Error(`Failed to generate questions: ${error.message}`);
     }
   }
