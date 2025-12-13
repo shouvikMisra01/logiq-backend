@@ -18,6 +18,7 @@ import chaptersRoutes from "./routes/chapters";
 import teacherRoutes from './routes/teachers';
 import passwordRoutes from './routes/password';
 import schoolAdminRoutes from './routes/schoolAdmin';
+import { initializePdfDirectory } from './utils/pathUtils';
 
 const app: Application = express();
 const PORT: number = parseInt(process.env.PORT || '5000');
@@ -95,7 +96,10 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 
 // Connect to MongoDB and start server
 connectDB()
-  .then(() => {
+  .then(async () => {
+    // Initialize PDF directory and list available PDFs
+    await initializePdfDirectory();
+
     app.listen(PORT, () => {
       console.log(`🚀 Backend server running on http://localhost:${PORT}`);
       console.log(`✅ MongoDB connected successfully`);
