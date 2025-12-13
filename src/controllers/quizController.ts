@@ -18,29 +18,29 @@ export const generateQuiz = async (req: Request, res: Response): Promise<void> =
       timestamp: new Date().toISOString(),
     });
 
-    const { student_id, school_id, class_id, subject, chapter } = req.body;
+    const { studentId, schoolId, classNumber, subject, chapter, topic } = req.body;
 
-    // Validate required fields are present and non-empty strings
-    if (!student_id || typeof student_id !== 'string' || student_id.trim() === '') {
-      console.error('[QuizController] Invalid student_id:', student_id);
+    // Validate required fields
+    if (!studentId || typeof studentId !== 'string' || studentId.trim() === '') {
+      console.error('[QuizController] Invalid studentId:', studentId);
       res.status(400).json({
-        error: 'Invalid or missing student_id (must be non-empty string)',
+        error: 'Invalid or missing studentId (must be non-empty string)',
       });
       return;
     }
 
-    if (!school_id || typeof school_id !== 'string' || school_id.trim() === '') {
-      console.error('[QuizController] Invalid school_id:', school_id);
+    if (!schoolId || typeof schoolId !== 'string' || schoolId.trim() === '') {
+      console.error('[QuizController] Invalid schoolId:', schoolId);
       res.status(400).json({
-        error: 'Invalid or missing school_id (must be non-empty string)',
+        error: 'Invalid or missing schoolId (must be non-empty string)',
       });
       return;
     }
 
-    if (!class_id || typeof class_id !== 'string' || class_id.trim() === '') {
-      console.error('[QuizController] Invalid class_id:', class_id);
+    if (!classNumber || typeof classNumber !== 'number' || classNumber <= 0) {
+      console.error('[QuizController] Invalid classNumber:', classNumber);
       res.status(400).json({
-        error: 'Invalid or missing class_id (must be non-empty string)',
+        error: 'Invalid or missing classNumber (must be positive number)',
       });
       return;
     }
@@ -63,10 +63,13 @@ export const generateQuiz = async (req: Request, res: Response): Promise<void> =
 
     console.log('[QuizController] Validation passed, calling QuizService.generateQuiz');
 
+    // Convert classNumber to class_id format for internal services
+    const class_id = `class ${classNumber}`;
+
     const quizAttempt = await QuizService.generateQuiz({
-      student_id: student_id.trim(),
-      school_id: school_id.trim(),
-      class_id: class_id.trim(),
+      student_id: studentId.trim(),
+      school_id: schoolId.trim(),
+      class_id: class_id,
       subject: subject.trim(),
       chapter: chapter.trim(),
     });
