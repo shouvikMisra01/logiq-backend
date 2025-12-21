@@ -109,8 +109,24 @@ export class AuthService {
         throw new Error('Invalid email or password');
       }
 
-      // Extract class number from class_id (e.g., "Class 8" -> 8)
-      const classNumber = parseInt(student.class_id.replace(/\D/g, ''), 10) || 8;
+      // Fetch class details to get the actual class number
+      const classesCol = collections.classes();
+      const classDoc = await classesCol.findOne({ class_id: student.class_id }); // or _id depending on schema, usually class_id is custom ID
+
+      // Logic to determine class number:
+      // 1. From Class Document if found (preferred)
+      // 2. From parsing the class_id string itself (fallback for "Class 9" format)
+      let classNumber = 0;
+
+      if (classDoc) {
+        classNumber = classDoc.class_number || (classDoc.name ? parseInt(classDoc.name.replace(/\D/g, ''), 10) : 0) || 0;
+      } else if (student.class_id && typeof student.class_id === 'string') {
+        // Fallback: If class_id is "Class 9", extract 9 directly
+        const match = student.class_id.match(/\d+/);
+        if (match) {
+          classNumber = parseInt(match[0], 10);
+        }
+      }
 
       // Generate JWT for student
       const token = this.generateToken({
@@ -207,6 +223,22 @@ export class AuthService {
         throw new Error('Invalid email or password');
       }
 
+      // Fetch fresh class details to ensure correct class number
+      const classesCol = collections.classes();
+      // Assuming child_class_label stores the class_id or we need to find the student to get the class_id
+      // Let's first fetch the student to be sure about class_id
+      const studentsCol = collections.students();
+      const childStudent = await studentsCol.findOne({ student_id: parent.child_student_id });
+
+      let finalClassNumber = parent.child_class_number || 0;
+      let finalClassLabel = parent.child_class_label;
+
+      if (childStudent) {
+        finalClassLabel = childStudent.class_id;
+        const classDoc = await classesCol.findOne({ class_id: childStudent.class_id });
+        finalClassNumber = classDoc?.class_number || (classDoc?.name ? parseInt(classDoc.name.replace(/\D/g, ''), 10) : 0) || 0;
+      }
+
       // Generate JWT for parent (includes child info)
       const token = this.generateToken({
         userId: parent.parent_id,
@@ -214,8 +246,8 @@ export class AuthService {
         name: parent.name,
         role: 'parent',
         schoolId: parent.school_id,
-        classLabel: parent.child_class_label,
-        classNumber: parent.child_class_number,
+        classLabel: finalClassLabel,
+        classNumber: finalClassNumber,
         childStudentId: parent.child_student_id,
         childName: parent.child_name,
       });
@@ -304,6 +336,131 @@ export class AuthService {
         schoolId: result.user.schoolId!,
       },
     };
+  }
+
+  /**
+   * Request Password Reset
+   */
+  static async requestPasswordReset(email: string): Promise<boolean> {
+    const token = crypto.randomBytes(32).toString('hex');
+    const expires = new Date(Date.now() + 3600000); // 1 hour from now
+
+    // Helper to update any user collection
+    const updateToken = async (collection: any) => {
+      const result = await collection.updateOne(
+        { email },
+        { $set: { reset_token: token, reset_expires: expires } }
+      );
+      return result.matchedCount > 0;
+    };
+
+    // Try all collections
+    let found = await updateToken(collections.students());
+    if (!found) found = await updateToken(collections.super_admins());
+    if (!found) found = await updateToken(collections.school_admins());
+    if (!found) found = await updateToken(collections.teachers());
+    if (!found) found = await updateToken(collections.parents());
+
+    if (found) {
+      // Send email (import dynamically to avoid circular dep if any, or just import at top)
+      const { EmailService } = await import('./emailService');
+      await EmailService.sendPasswordReset(email, token);
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Reset Password with Token
+   */
+  static async resetPassword(token: string, newPassword: string): Promise<boolean> {
+    const hashed = this.hashPassword(newPassword);
+
+    // Find user with valid token
+    const query = {
+      reset_token: token,
+      reset_expires: { $gt: new Date() }
+    };
+
+    const update = {
+      $set: { password_hash: hashed, is_verified: true },
+      $unset: { reset_token: "", reset_expires: "" }
+    };
+
+    // Helper to update
+    const attemptReset = async (collection: any) => {
+      const result = await collection.updateOne(query, update);
+      return result.modifiedCount > 0;
+    };
+
+    if (await attemptReset(collections.students())) return true;
+    if (await attemptReset(collections.super_admins())) return true;
+    if (await attemptReset(collections.school_admins())) return true;
+    if (await attemptReset(collections.teachers())) return true;
+    if (await attemptReset(collections.parents())) return true;
+
+    throw new Error('Invalid or expired reset token');
+  }
+
+  /**
+   * Verify Invite Token
+   */
+  static async verifyInviteToken(token: string): Promise<{ valid: boolean; email?: string; role?: string }> {
+    const query = {
+      invite_token: token,
+      invite_expires: { $gt: new Date() }
+    };
+
+    // Helper
+    const findUser = async (collection: any, roleName: string) => {
+      const user = await collection.findOne(query);
+      if (user) return { valid: true, email: user.email, role: roleName };
+      return null;
+    };
+
+    let result = await findUser(collections.teachers(), 'teacher');
+    if (result) return result;
+
+    result = await findUser(collections.students(), 'student');
+    if (result) return result;
+
+    result = await findUser(collections.parents(), 'parent');
+    if (result) return result;
+
+    result = await findUser(collections.school_admins(), 'school_admin');
+    if (result) return result;
+
+    return { valid: false };
+  }
+
+  /**
+   * Complete Invite (Set Password)
+   */
+  static async completeInvite(token: string, password: string): Promise<boolean> {
+    const hashed = this.hashPassword(password);
+
+    const query = {
+      invite_token: token,
+      invite_expires: { $gt: new Date() }
+    };
+
+    const update = {
+      $set: { password_hash: hashed, is_verified: true, status: 'active' },
+      $unset: { invite_token: "", invite_expires: "" }
+    };
+
+    const attemptUpdate = async (collection: any) => {
+      const res = await collection.updateOne(query, update);
+      return res.modifiedCount > 0;
+    };
+
+    if (await attemptUpdate(collections.teachers())) return true;
+    if (await attemptUpdate(collections.students())) return true;
+    if (await attemptUpdate(collections.parents())) return true;
+    if (await attemptUpdate(collections.school_admins())) return true;
+
+    throw new Error('Invalid or expired invite token');
   }
 }
 

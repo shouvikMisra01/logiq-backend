@@ -32,6 +32,7 @@ export interface QuizAttempt {
   class_id: string;
   subject: string;
   chapter: string;
+  topic: string;
   quiz_index: number;
   week_number: number;
 
@@ -66,6 +67,7 @@ export interface QuizGenerateRequest {
   class_id: string;
   subject: string;
   chapter: string;
+  topic: string;
 }
 
 export interface QuizSubmitRequest {

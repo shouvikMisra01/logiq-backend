@@ -6,6 +6,7 @@
 import { collections } from '../config/database';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
+import { AuthFields } from '../types/auth'; // Ensure this matches user request logic where I created `auth.ts`
 
 interface CreateStudentData {
   school_id: string;
@@ -24,7 +25,7 @@ interface UpdateStudentData {
   status?: string;
 }
 
-interface Student {
+interface Student extends AuthFields {
   _id?: any;
   student_id: string;
   school_id: string;
@@ -82,21 +83,32 @@ export class StudentService {
     // Generate unique student ID
     const studentId = `student_${uuidv4().substring(0, 12)}`;
 
+    // Student Invite Token
+    const studentInviteToken = crypto.randomBytes(32).toString('hex');
+    const inviteExpires = new Date(Date.now() + 72 * 60 * 60 * 1000); // 72 hours
+
     const student: Partial<Student> = {
       student_id: studentId,
       school_id: studentData.school_id,
       name: studentData.name,
       email: studentData.email,
       class_id: studentData.class_id,
-      password_hash: this.hashPassword(studentData.password),
+      // password_hash: this.hashPassword(studentData.password), // Removed immediate password set
       status: 'active',
+      is_verified: false,
+      invite_token: studentInviteToken,
+      invite_expires: inviteExpires,
       created_at: new Date(),
       updated_at: new Date(),
     };
 
     await studentsCol.insertOne(student);
 
-    // Student count is now calculated dynamically from students collection
+    // Send Student Invite
+    const { EmailService } = await import('./emailService');
+    await EmailService.sendInvite(studentData.email, studentInviteToken, 'student');
+
+    let message = 'Student created and invite sent to student email.';
 
     // Create parent account if parent information is provided
     if (studentData.parent_name && studentData.parent_email) {
@@ -105,36 +117,37 @@ export class StudentService {
       // Extract class number from class_id (e.g., "Class 8" -> 8)
       const classNumber = parseInt(studentData.class_id.replace(/\D/g, ''), 10) || 0;
 
-      // Generate a default password for parent (they should change it later)
-      const defaultParentPassword = `Parent@${studentId.substring(8)}`;
+      // Parent Invite Token
+      const parentInviteToken = crypto.randomBytes(32).toString('hex');
 
       const parent = {
         parent_id: parentId,
         name: studentData.parent_name,
         email: studentData.parent_email,
-        password_hash: this.hashPassword(defaultParentPassword),
         school_id: studentData.school_id,
         child_student_id: studentId,
         child_name: studentData.name,
         child_class_label: studentData.class_id,
         child_class_number: classNumber,
+        is_verified: false,
+        invite_token: parentInviteToken,
+        invite_expires: inviteExpires,
         created_at: new Date(),
         updated_at: new Date(),
       };
 
       await parentsCol.insertOne(parent);
 
-      return {
-        success: true,
-        student_id: studentId,
-        message: `Student created successfully. Parent account created with default password: ${defaultParentPassword}`,
-      };
+      // Send Parent Invite
+      await EmailService.sendInvite(studentData.parent_email, parentInviteToken, 'parent');
+
+      message += ' Parent account created and invite sent.';
     }
 
     return {
       success: true,
       student_id: studentId,
-      message: 'Student created successfully',
+      message,
     };
   }
 
@@ -217,6 +230,8 @@ export class StudentService {
    * Get comprehensive dashboard statistics for a student
    */
   static async getDashboardStats(studentId: string): Promise<any> {
+    console.log('[StudentService] getDashboardStats called for student:', studentId);
+
     const studentsCol = collections.students();
     const newAttemptsCol = collections.question_set_attempts();
     const oldAttemptsCol = collections.quiz_attempts();
@@ -226,8 +241,11 @@ export class StudentService {
     // Verify student exists
     const student = await studentsCol.findOne({ student_id: studentId });
     if (!student) {
+      console.error('[StudentService] Student not found:', studentId);
       throw new Error('Student not found');
     }
+
+    console.log('[StudentService] Student found:', student.name);
 
     // Get quiz attempts from BOTH old and new systems
     const newAttempts = await newAttemptsCol
@@ -265,6 +283,12 @@ export class StudentService {
 
     // Merge both attempts
     const attempts = [...newAttempts.map((a: any) => ({ ...a, is_old_system: false })), ...normalizedOldAttempts];
+
+    console.log('[StudentService] Total quiz attempts found:', {
+      new: newAttempts.length,
+      old: oldAttempts.length,
+      total: attempts.length
+    });
 
     // Get all skill stats for this student
     const skillStats = await skillStatsCol
@@ -423,6 +447,48 @@ export class StudentService {
     // Last activity date
     const lastActivity = attempts.length > 0 ? attempts[0].attempted_at : null;
 
+    // Aggregate feature scores across all subjects (weighted by total questions answered)
+    let totalQuestionsFeatures = 0;
+    const aggregatedFeatures = {
+      memorization: 0,
+      reasoning: 0,
+      numerical: 0,
+      language: 0,
+    };
+
+    // 1. From Student Skill Stats (New System)
+    skillStats.forEach((stat: any) => {
+      const weight = stat.total_questions_answered || 0;
+      if (weight > 0 && stat.features_avg) {
+        aggregatedFeatures.memorization += (stat.features_avg.memorization || 0) * weight;
+        aggregatedFeatures.reasoning += (stat.features_avg.reasoning || 0) * weight;
+        aggregatedFeatures.numerical += (stat.features_avg.numerical || 0) * weight;
+        aggregatedFeatures.language += (stat.features_avg.language || 0) * weight;
+        totalQuestionsFeatures += weight;
+      }
+    });
+
+    // 2. From Old System Attempts
+    // oldSystemAttempts is already defined above
+    oldSystemAttempts.forEach((att: any) => {
+      const weight = att.total_questions || 10;
+      if (att.feature_scores) {
+        aggregatedFeatures.memorization += (att.feature_scores.memorization || 0) * weight;
+        aggregatedFeatures.reasoning += (att.feature_scores.reasoning || 0) * weight;
+        aggregatedFeatures.numerical += (att.feature_scores.numerical || 0) * weight;
+        aggregatedFeatures.language += (att.feature_scores.language || 0) * weight;
+        totalQuestionsFeatures += weight;
+      }
+    });
+
+    // Calculate final weighted averages
+    const featureScores = {
+      memorization: totalQuestionsFeatures > 0 ? aggregatedFeatures.memorization / totalQuestionsFeatures : 0,
+      reasoning: totalQuestionsFeatures > 0 ? aggregatedFeatures.reasoning / totalQuestionsFeatures : 0,
+      numerical: totalQuestionsFeatures > 0 ? aggregatedFeatures.numerical / totalQuestionsFeatures : 0,
+      language: totalQuestionsFeatures > 0 ? aggregatedFeatures.language / totalQuestionsFeatures : 0,
+    };
+
     return {
       student_id: studentId,
       student_name: student.name,
@@ -432,6 +498,7 @@ export class StudentService {
         total_correct: totalCorrect,
         overall_accuracy: parseFloat(overallAccuracy.toFixed(2)),
         subjects_studied: subjectsStudied,
+        feature_scores: featureScores, // ADDED: Production-grade weighted average feature scores
       },
       study_activity: {
         study_streak: studyStreak,

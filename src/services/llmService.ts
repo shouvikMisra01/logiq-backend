@@ -101,12 +101,14 @@ export class LLMService {
     classId: string,
     subject: string,
     chapter: string,
-    classNumber: number
+    classNumber: number,
+    topic?: string
   ): Promise<Question[]> {
     console.log('[LLMService] generateQuestionsFromText called:', {
       classId,
       subject,
       chapter,
+      topic,
       classNumber,
       textLength: chapterText.length,
     });
@@ -139,14 +141,22 @@ export class LLMService {
       classLevel = 'senior secondary (advanced concepts, analytical thinking)';
     }
 
+    const topicFocusInstruction = topic
+      ? `\n\n🎯 CRITICAL TOPIC FOCUS:
+- Generate questions ONLY about the topic: "${topic}"
+- Do NOT generate questions about other topics in the chapter
+- All 10 questions MUST be specifically related to "${topic}"
+- If the chapter text does not contain sufficient information about "${topic}", use your knowledge of Class ${classNumber} ${subject} curriculum to generate relevant questions about "${topic}"`
+      : '';
+
     const systemPrompt = `You are an expert CBSE school teacher and assessment designer specializing in Class ${classNumber} (${classLevel}).
 
 CRITICAL REQUIREMENTS:
 1. Generate EXACTLY 10 multiple-choice questions
-2. ALL questions MUST be directly from the provided chapter content
+2. ALL questions MUST be directly from the provided chapter content${topic ? ` focusing ONLY on the topic "${topic}"` : ''}
 3. Questions MUST match Class ${classNumber} cognitive level and curriculum
 4. Use age-appropriate language for Class ${classNumber} students
-5. Questions should test understanding of the SPECIFIC topics covered in this chapter
+5. Questions should test understanding of the SPECIFIC topic${topic ? ` "${topic}"` : 's covered in this chapter'}${topicFocusInstruction}
 
 QUESTION MIX (STRICT):
 - At least 3 questions MUST be numerical/calculation-based (if applicable to subject)
@@ -245,7 +255,7 @@ Output format with LaTeX examples (note the double backslashes in JSON):
 
     const userPrompt = `Class: ${classNumber} (${classId})
 Subject: ${subject}
-Chapter/Topic: ${chapter}
+Chapter: ${chapter}${topic ? `\nTopic (FOCUS ONLY ON THIS): ${topic}` : ''}
 
 CHAPTER CONTENT:
 """
@@ -253,11 +263,12 @@ ${chapterText.substring(0, 12000)}
 """
 
 Generate EXACTLY 10 questions that:
-1. Are ONLY about topics in this chapter content
+1. ${topic ? `Are ONLY about the topic "${topic}" - DO NOT include questions about other topics` : 'Are ONLY about topics in this chapter content'}
 2. Match Class ${classNumber} difficulty level
 3. Follow the question mix requirements
 4. Are relevant and appropriate for CBSE Class ${classNumber} ${subject}
 
+${topic ? `\n⚠️ REMINDER: ALL questions must be specifically about "${topic}" - no other topics from the chapter!\n` : ''}
 Return ONLY the JSON with questions.`;
 
     try {
@@ -324,51 +335,52 @@ Return ONLY the JSON with questions.`;
         rawContent = rawContent.replace(/^```(?:json)?\\n?/, '').replace(/```$/, '').trim();
       }
 
-      console.log('[LLMService] Raw content length before LaTeX fix:', rawContent.length);
+      console.log('[LLMService] Raw content length before sanitization:', rawContent.length);
 
-      // Fix common LaTeX escaping issues in JSON strings
-      // We need to ensure backslashes in LaTeX expressions are properly escaped for JSON
-      // In JSON strings, a literal backslash needs to be \\
-      // So \sqrt should become \\\\sqrt (4 backslashes) to represent \\sqrt after parsing
-      let latexFixCount = 0;
-
+      // Sanitize JSON to fix common LLM-generated errors
       // First, let's try to parse as-is
-      let needsFix = false;
+      let needsSanitization = false;
       try {
         JSON.parse(rawContent);
-        console.log('[LLMService] JSON is already valid, no LaTeX fix needed');
+        console.log('[LLMService] JSON is already valid, no sanitization needed');
       } catch (e) {
-        needsFix = true;
-        console.log('[LLMService] JSON parse failed, attempting LaTeX fixes');
+        needsSanitization = true;
+        console.log('[LLMService] JSON parse failed, attempting sanitization');
       }
 
-      if (needsFix) {
-        // Only apply fixes if JSON is invalid
-        // Replace improperly escaped backslashes in LaTeX expressions
-        rawContent = rawContent.replace(/\$\$([^$]+)\$\$/g, (match, content) => {
-          // Display math: $$...$$ - ensure proper escaping
-          // Replace single backslashes with double backslashes for JSON
-          const fixed = content.replace(/\\([a-zA-Z]+)/g, '\\\\$1');
-          if (fixed !== content) {
-            console.log('[LLMService] Fixed display math:', content.substring(0, 50), '->', fixed.substring(0, 50));
-            latexFixCount++;
-          }
-          return `$$${fixed}$$`;
-        });
+      if (needsSanitization) {
+        // Aggressive fix: Replace all backslashes that aren't part of valid JSON escape sequences
+        // Valid JSON escapes: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
 
-        rawContent = rawContent.replace(/\$([^$]+)\$/g, (match, content) => {
-          // Inline math: $...$ - ensure proper escaping
-          const fixed = content.replace(/\\([a-zA-Z]+)/g, '\\\\$1');
-          if (fixed !== content) {
-            console.log('[LLMService] Fixed inline math:', content.substring(0, 50), '->', fixed.substring(0, 50));
-            latexFixCount++;
-          }
-          return `$${fixed}$`;
-        });
+        // Step 1: Protect valid escape sequences by temporarily replacing them
+        const protectedEscapes: Array<[string, string]> = [
+          ['\\\\', '\x00BACKSLASH\x00'],
+          ['\\"', '\x00QUOTE\x00'],
+          ['\\/', '\x00SLASH\x00'],
+          ['\\b', '\x00BACKSPACE\x00'],
+          ['\\f', '\x00FORMFEED\x00'],
+          ['\\n', '\x00NEWLINE\x00'],
+          ['\\r', '\x00RETURN\x00'],
+          ['\\t', '\x00TAB\x00'],
+        ];
 
-        if (latexFixCount > 0) {
-          console.log(`[LLMService] Applied LaTeX fixes to ${latexFixCount} expressions`);
+        let sanitized = rawContent;
+
+        // Protect valid escapes
+        for (const [original, placeholder] of protectedEscapes) {
+          sanitized = sanitized.split(original).join(placeholder);
         }
+
+        // Now replace all remaining backslashes with double backslashes
+        sanitized = sanitized.replace(/\\/g, '\\\\');
+
+        // Restore protected escapes
+        for (const [original, placeholder] of protectedEscapes) {
+          sanitized = sanitized.split(placeholder).join(original);
+        }
+
+        console.log('[LLMService] Applied aggressive JSON sanitization');
+        rawContent = sanitized;
       }
 
       // JSON parsing with detailed error handling
