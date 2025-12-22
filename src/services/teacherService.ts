@@ -273,15 +273,16 @@ export class TeacherService {
   }
 
   static async getClassesForSchool(schoolId: string) {
-    const classes = await collections.chapters()
-      .aggregate([
-        { $match: { school_id: schoolId } },
-        { $group: { _id: '$class_id' } },
-        { $sort: { _id: 1 } }
-      ])
+    const classes = await collections.classes()
+      .find({ school_id: schoolId })
       .toArray();
 
-    return { classes: classes.map(c => ({ class_id: c._id })) };
+    return {
+      classes: classes.map(c => ({
+        class_id: c.class_id,
+        label: c.name || c.label || `Class ${c.class_number}`
+      }))
+    };
   }
 
   static async getSubjectsForClass(schoolId: string, classId: string) {

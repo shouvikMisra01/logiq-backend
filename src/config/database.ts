@@ -154,6 +154,42 @@ export async function setupIndexes(): Promise<void> {
 
     console.log('[Database] ✅ student_skill_stats indexes created');
 
+    // ============================================================================
+    // EMAIL TOKENS INDEXES - For System-wide Auth
+    // ============================================================================
+    const emailTokensCol = database.collection('email_tokens');
+
+    // Unique Token Index
+    await emailTokensCol.createIndex(
+      { token: 1 },
+      {
+        name: 'token_lookup_idx',
+        unique: true,
+        background: true,
+      }
+    );
+
+    // TTL Index for automatic expiration
+    await emailTokensCol.createIndex(
+      { expiresAt: 1 },
+      {
+        name: 'token_expiry_idx',
+        expireAfterSeconds: 0, // Expires exactly at the time specified in expiresAt
+        background: true,
+      }
+    );
+
+    console.log('[Database] ✅ email_tokens indexes created');
+
+    // Index for email to optimize lookup/cleanup
+    await emailTokensCol.createIndex(
+      { email: 1 },
+      {
+        name: 'email_lookup_idx',
+        background: true,
+      }
+    );
+
     console.log('[Database] 🎉 All indexes set up successfully');
   } catch (error: any) {
     console.error('[Database] ❌ Error setting up indexes:', error.message);
@@ -243,4 +279,5 @@ export const collections = {
   teachers: () => getCollection('teachers'),
   teacher_assignments: () => getCollection('teacher_assignments'),
   classes: () => getCollection('classes'),
+  email_tokens: () => getCollection('email_tokens'),
 };

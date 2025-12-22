@@ -253,6 +253,16 @@ export class StudentService {
       .sort({ attempted_at: -1 })
       .toArray();
 
+    // Mapping for deduplication: checks if an old quiz_id was synced to a new attempt_id
+    // Sync logic uses format: attempt_from_quiz_${quiz_id}
+    const syncedQuizIds = new Set<string>();
+    newAttempts.forEach((att: any) => {
+      if (att.attempt_id && typeof att.attempt_id === 'string' && att.attempt_id.startsWith('attempt_from_quiz_')) {
+        const quizId = att.attempt_id.replace('attempt_from_quiz_', '');
+        syncedQuizIds.add(quizId);
+      }
+    });
+
     // Map new student_id format to old integer format
     // e.g., "student_001" -> 1, "student_002" -> 2
     let oldSystemStudentId: number | string = studentId;
@@ -267,19 +277,21 @@ export class StudentService {
       .toArray();
 
     // Normalize old attempts to match new format
-    const normalizedOldAttempts = oldAttempts.map((att: any) => ({
-      attempt_id: att.quiz_id,
-      set_id: att.quiz_id,
-      student_id: String(att.student_id),
-      subject: att.subject || 'Unknown',
-      topic: att.chapter || 'Unknown',
-      score_percentage: att.score_total * 100, // Old system uses 0-1, new uses 0-100
-      correct_count: Math.round((att.score_total || 0) * (att.questions?.length || 10)),
-      total_questions: att.questions?.length || 10,
-      attempted_at: att.submitted_at || att.created_at,
-      is_old_system: true,
-      feature_scores: att.feature_scores, // Keep for skills calculation
-    }));
+    const normalizedOldAttempts = oldAttempts
+      .filter((att: any) => !syncedQuizIds.has(att.quiz_id)) // DEDUPLICATION FILTER
+      .map((att: any) => ({
+        attempt_id: att.quiz_id,
+        set_id: att.quiz_id,
+        student_id: String(att.student_id),
+        subject: att.subject || 'Unknown',
+        topic: att.chapter || 'Unknown',
+        score_percentage: att.score_total * 100, // Old system uses 0-1, new uses 0-100
+        correct_count: Math.round((att.score_total || 0) * (att.questions?.length || 10)),
+        total_questions: att.questions?.length || 10,
+        attempted_at: att.submitted_at || att.created_at,
+        is_old_system: true,
+        feature_scores: att.feature_scores, // Keep for skills calculation
+      }));
 
     // Merge both attempts
     const attempts = [...newAttempts.map((a: any) => ({ ...a, is_old_system: false })), ...normalizedOldAttempts];
@@ -287,6 +299,7 @@ export class StudentService {
     console.log('[StudentService] Total quiz attempts found:', {
       new: newAttempts.length,
       old: oldAttempts.length,
+      deduplicated_old: normalizedOldAttempts.length,
       total: attempts.length
     });
 

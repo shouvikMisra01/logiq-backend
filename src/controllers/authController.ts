@@ -152,3 +152,44 @@ export const completeInvite = async (req: Request, res: Response): Promise<void>
     res.status(400).json({ error: error.message });
   }
 };
+
+// ============================================================================
+// NEW UNIFIED AUTH CONTROLLERS
+// ============================================================================
+
+export const sendAuthLink = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, purpose, role } = req.body;
+    if (!email || !purpose) {
+      res.status(400).json({ error: 'Email and purpose are required' });
+      return;
+    }
+
+    if (!['login', 'reset', 'verify'].includes(purpose)) {
+      res.status(400).json({ error: 'Invalid purpose' });
+      return;
+    }
+
+    await AuthService.sendAuthLink(email, purpose, role);
+    res.json({ message: 'Link sent successfully' });
+  } catch (error: any) {
+    console.error('[Auth] Send Link Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to send link' });
+  }
+};
+
+export const verifyAuthToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      res.status(400).json({ error: 'Token is required' });
+      return;
+    }
+
+    const result = await AuthService.verifyAuthToken(token);
+    res.json(result);
+  } catch (error: any) {
+    console.error('[Auth] Verify Token Error:', error);
+    res.status(400).json({ error: error.message || 'Invalid or expired token' });
+  }
+};

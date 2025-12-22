@@ -53,8 +53,10 @@ export const getSubjectsForStudent = async (
     const classNumber = req.student?.classNumber || req.user?.classNumber;
 
     if (!classNumber) {
-      console.log('[Syllabus] No class data in request');
-      res.status(401).json({ error: 'Unauthorized - Student or Parent role required' });
+      console.log('[Syllabus] ❌ Access denied: No class data in request.');
+      console.log('[Syllabus] User info:', JSON.stringify(req.user));
+      console.log('[Syllabus] Student info:', JSON.stringify(req.student));
+      res.status(401).json({ error: 'Unauthorized - Student or Parent role required (Missing class configuration)' });
       return;
     }
 

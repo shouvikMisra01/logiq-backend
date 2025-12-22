@@ -111,4 +111,49 @@ export class EmailService {
 
         return this.sendEmail(email, subject, html, `Setup your account here: ${link}`);
     }
+    /**
+     * Send Generic Auth Link (Magic Link)
+     * Used for: Login, Support, Password Reset, Verification
+     */
+    static async sendAuthLink(email: string, link: string, purpose: 'login' | 'reset' | 'verify') {
+        let subject = '';
+        let title = '';
+        let message = '';
+        let buttonText = '';
+        let buttonColor = '#4F46E5'; // Default indigo
+
+        switch (purpose) {
+            case 'login':
+                subject = 'Log in to LogiQ';
+                title = 'Your Login Link';
+                message = 'Click the button below to log in to your account. This link works only once.';
+                buttonText = 'Log In Now';
+                break;
+            case 'reset':
+                subject = 'Reset Your LogiQ Password';
+                title = 'Password Reset Request';
+                message = 'You requested a password reset. Click the button below to set a new password.';
+                buttonText = 'Reset Password';
+                break;
+            case 'verify':
+                subject = 'Verify Your Email';
+                title = 'Verify Your Email Address';
+                message = 'Please verify your email address to complete your registration.';
+                buttonText = 'Verify Email';
+                buttonColor = '#10B981'; // Green
+                break;
+        }
+
+        const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>${title}</h2>
+        <p>${message}</p>
+        <a href="${link}" style="display: inline-block; padding: 12px 24px; background-color: ${buttonColor}; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold;">${buttonText}</a>
+        <p>Or copy this link: <a href="${link}">${link}</a></p>
+        <p style="font-size: 12px; color: #666; margin-top: 30px;">If you didn't request this, you can safely ignore this email.</p>
+      </div>
+    `;
+
+        return this.sendEmail(email, subject, html, `${title}: ${link}`);
+    }
 }

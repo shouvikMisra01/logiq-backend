@@ -14,7 +14,7 @@ router.post('/', requireRole(['school_admin', 'super_admin']), async (req, res) 
         const { name, section } = req.body;
         // user.schoolId should be present for school_admin
         // For super_admin, they might pass school_id in body
-        const schoolId = (req.user as any).schoolId || req.body.school_id;
+        const schoolId = (req as any).user.schoolId || req.body.school_id;
 
         if (!schoolId) {
             return res.status(400).json({ error: 'School ID is required' });
@@ -31,7 +31,7 @@ router.post('/', requireRole(['school_admin', 'super_admin']), async (req, res) 
 // GET /api/classes?school_id=... (optional, defaults to user's school)
 router.get('/', async (req, res) => {
     try {
-        const schoolId = (req.user as any).schoolId || req.query.school_id;
+        const schoolId = (req as any).user.schoolId || req.query.school_id;
 
         if (!schoolId) {
             return res.status(400).json({ error: 'School ID is required' });
@@ -49,13 +49,13 @@ router.get('/', async (req, res) => {
 router.delete('/:id', requireRole(['school_admin', 'super_admin']), async (req, res) => {
     try {
         const classId = req.params.id;
-        const schoolId = (req.user as any).schoolId;
+        const schoolId = (req as any).user.schoolId;
 
         // TODO: If super_admin, verify they can delete any class or specific school logic
         // For now assuming school_admin is deleting their own class
 
         // Safety check: ensure schoolId is present if user is school_admin
-        if ((req.user as any).role === 'school_admin' && !schoolId) {
+        if ((req as any).user.role === 'school_admin' && !schoolId) {
             return res.status(403).json({ error: 'No school associated with admin account' });
         }
 
