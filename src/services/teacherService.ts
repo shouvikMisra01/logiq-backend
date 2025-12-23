@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 import { collections } from '../config/database';
 import { TeacherDoc, TeacherAssignmentDoc } from '../types/teacher';
 
@@ -62,6 +63,9 @@ export class TeacherService {
       };
     }
 
+    const inviteToken = crypto.randomBytes(32).toString('hex');
+    const inviteExpires = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000); // 72 hours
+
     const teacher: TeacherDoc = {
       teacher_id: uuidv4(),
       school_id: schoolId,
@@ -69,14 +73,19 @@ export class TeacherService {
       email,
       role: role as 'teacher' | 'mentor' | 'admin',
       created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      is_verified: false,
+      invite_token: inviteToken,
+      invite_expires: inviteExpires,
     };
 
     await collections.teachers().insertOne(teacher);
 
-    const tempPassword = Math.random().toString(36).slice(-8);
+    // Send Invite Email
+    const { EmailService } = await import('./emailService');
+    await EmailService.sendInvite(email, inviteToken, role);
 
-    return { teacher, tempPassword };
+    return { teacher, message: 'Invite sent to teacher email' };
   }
 
   static async updateTeacher(teacherId: string, payload: Partial<{ name: string; email: string; role: string }>) {
@@ -264,15 +273,16 @@ export class TeacherService {
   }
 
   static async getClassesForSchool(schoolId: string) {
-    const classes = await collections.chapters()
-      .aggregate([
-        { $match: { school_id: schoolId } },
-        { $group: { _id: '$class_id' } },
-        { $sort: { _id: 1 } }
-      ])
+    const classes = await collections.classes()
+      .find({ school_id: schoolId })
       .toArray();
 
-    return { classes: classes.map(c => ({ class_id: c._id })) };
+    return {
+      classes: classes.map(c => ({
+        class_id: c.class_id,
+        label: c.name || c.label || `Class ${c.class_number}`
+      }))
+    };
   }
 
   static async getSubjectsForClass(schoolId: string, classId: string) {

@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { collections } from '../config/database';
 import { LLMService } from './llmService';
 import { SyllabusService } from './syllabusService';
+import { QuestionSetService } from './questionSetService';
 import {
   QuizAttempt,
   Question,
@@ -21,7 +22,7 @@ export class QuizService {
    * Generate a new quiz from PDF content
    */
   static async generateQuiz(request: QuizGenerateRequest): Promise<QuizAttempt> {
-    const { student_id, school_id, class_id, subject, chapter } = request;
+    const { student_id, school_id, class_id, subject, chapter, topic } = request;
 
     console.log('[QuizService] generateQuiz called:', {
       student_id,
@@ -29,6 +30,7 @@ export class QuizService {
       class_id,
       subject,
       chapter,
+      topic,
     });
 
     try {
@@ -40,8 +42,8 @@ export class QuizService {
         throw new Error(errMsg);
       }
 
-      // 1. Check for incomplete quizzes
-      console.log('[QuizService] Checking for incomplete quizzes');
+      // 1. Check for incomplete quizzes per topic
+      console.log('[QuizService] Checking for incomplete quizzes per topic');
       let incompleteQuizzes;
       try {
         incompleteQuizzes = await quizCol
@@ -50,7 +52,7 @@ export class QuizService {
             school_id,
             class_id,
             subject,
-            chapter,
+            topic, // Check per topic instead of chapter
             submitted_at: { $exists: false }, // Not submitted
           })
           .sort({ created_at: 1 }) // Oldest first
@@ -60,12 +62,12 @@ export class QuizService {
         throw new Error(`Database error: Failed to check incomplete quizzes: ${dbError.message}`);
       }
 
-      // If 5 or more incomplete quizzes, return the oldest one to complete
+      // If 5 or more incomplete quizzes per topic, return the oldest one to complete
       if (incompleteQuizzes.length >= 5) {
         const oldestIncomplete = incompleteQuizzes[0] as QuizAttempt;
 
         console.log(
-          `[QuizService] Found ${incompleteQuizzes.length} incomplete quizzes. Returning oldest incomplete quiz: ${oldestIncomplete.quiz_id}`
+          `[QuizService] Found ${incompleteQuizzes.length} incomplete quizzes for topic "${topic}". Returning oldest incomplete quiz: ${oldestIncomplete.quiz_id}`
         );
 
         // Return the incomplete quiz with a flag indicating it's not new
@@ -88,7 +90,166 @@ export class QuizService {
 
       console.log('[QuizService] Class number validated:', classNumber);
 
-      // 2. Extract text from PDF using new Syllabus system
+      // 2. Check if 5 question sets exist per topic in database
+      console.log('[QuizService] Checking for existing question sets in database');
+      let questionSets;
+      try {
+        questionSets = await QuestionSetService.findSetsByTopic(
+          classNumber,
+          subject,
+          chapter,
+          topic
+        );
+      } catch (dbError: any) {
+        console.error('[QuizService] Error fetching question sets:', dbError.message);
+        // Continue with AI generation if database check fails
+        questionSets = [];
+      }
+
+      // If 5 or more question sets exist per topic, retrieve from database
+      if (questionSets.length >= 5) {
+        console.log(
+          `[QuizService] Found ${questionSets.length} question sets for topic "${topic}". Retrieving from database instead of generating from AI.`
+        );
+
+        // Find an unattempted set for this student
+        let unattemptedSet;
+        try {
+          unattemptedSet = await QuestionSetService.findUnattemptedSet(
+            student_id,
+            classNumber,
+            subject,
+            chapter,
+            topic
+          );
+        } catch (dbError: any) {
+          console.error('[QuizService] Error finding unattempted set:', dbError.message);
+          throw new Error(`Failed to find unattempted question set: ${dbError.message}`);
+        }
+
+        if (unattemptedSet) {
+          console.log(
+            `[QuizService] Found unattempted question set: ${unattemptedSet.set_id}. Converting to quiz attempt.`
+          );
+
+          // Convert question set to quiz attempt format
+          const quiz_id = `quiz_${uuidv4().substring(0, 12)}`;
+          const now = new Date();
+          const week_number = this.getWeekNumber(now);
+
+          // Calculate quiz index for this student & topic
+          let allQuizzes;
+          try {
+            allQuizzes = await quizCol
+              .find({
+                student_id,
+                school_id,
+                class_id,
+                subject,
+                topic,
+              })
+              .toArray();
+          } catch (dbError: any) {
+            console.error('[QuizService] Database error fetching all quizzes:', dbError.message);
+            throw new Error(`Database error: Failed to fetch quiz history: ${dbError.message}`);
+          }
+
+          const quiz_index = allQuizzes.length + 1;
+
+          // Convert QuestionSet questions to Quiz questions format
+          const questions: Question[] = unattemptedSet.questions.map((q: any) => ({
+            id: q.id,
+            question: q.question,
+            options: q.options,
+            correct_option_index: q.correct_option_index,
+            skills: q.skills,
+            features: {
+              memorization: q.features.memorization,
+              reasoning: q.features.reasoning,
+              numerical: q.features.numerical,
+              language: q.features.language,
+              difficulty_score: q.difficulty_score || 5,
+              difficulty_level: Math.ceil(q.difficulty_score * 10) || 5,
+            },
+          }));
+
+          // Calculate average difficulty
+          const avgDifficulty =
+            questions.reduce((sum, q) => sum + q.features.difficulty_score, 0) / questions.length;
+          const difficulty_level = LLMService.difficultyToLevel(avgDifficulty);
+
+          const quizAttempt: Partial<QuizAttempt> = {
+            quiz_id,
+            student_id,
+            school_id,
+            class_id,
+            subject,
+            chapter,
+            topic,
+            quiz_index,
+            week_number,
+            questions,
+            score_total: 0,
+            feature_scores: {
+              memorization: 0,
+              reasoning: 0,
+              numerical: 0,
+              language: 0,
+            },
+            difficulty_avg: avgDifficulty,
+            difficulty_level,
+            created_at: now,
+          };
+
+          console.log('[QuizService] Inserting quiz attempt from database set:', quiz_id, 'for student_id:', student_id);
+          try {
+            const insertResult = await quizCol.insertOne(quizAttempt);
+
+            if (!insertResult.acknowledged) {
+              console.error('[QuizService] ❌ Database write was not acknowledged!');
+              throw new Error('Database write was not acknowledged');
+            }
+
+            console.log('[QuizService] ✅ Quiz inserted into database, insertedId:', insertResult.insertedId);
+          } catch (dbError: any) {
+            console.error('[QuizService] ❌ Database error inserting quiz attempt:', dbError.message);
+            console.error('[QuizService] Error stack:', dbError.stack);
+            throw new Error(`Database error: Failed to create quiz: ${dbError.message}`);
+          }
+
+          // Verify the quiz was actually saved
+          try {
+            const verification = await quizCol.findOne({ quiz_id });
+            if (!verification) {
+              console.error('[QuizService] ❌ CRITICAL: Quiz was inserted but cannot be found!');
+              throw new Error('Quiz insertion verification failed - document not found after insert');
+            }
+            console.log('[QuizService] ✅ Quiz verified in database:', quiz_id);
+          } catch (verifyError: any) {
+            console.error('[QuizService] ❌ Verification error:', verifyError.message);
+            throw new Error(`Failed to verify quiz insertion: ${verifyError.message}`);
+          }
+
+          console.log('[QuizService] ✅ Quiz created from database successfully:', {
+            quiz_id,
+            student_id,
+            subject,
+            topic,
+            question_count: questions.length
+          });
+          return quizAttempt as QuizAttempt;
+        } else {
+          console.log(
+            '[QuizService] All question sets have been attempted. Proceeding with AI generation for new content.'
+          );
+        }
+      } else {
+        console.log(
+          `[QuizService] Only ${questionSets.length} question sets found for topic "${topic}". Need at least 5 to use database. Proceeding with AI generation.`
+        );
+      }
+
+      // 3. Extract text from PDF using new Syllabus system
       console.log('[QuizService] Fetching chapter text from syllabus');
       let chapterText;
       try {
@@ -99,7 +260,7 @@ export class QuizService {
       }
 
       // 3. Generate questions using LLM
-      console.log('[QuizService] Generating questions using LLM');
+      console.log('[QuizService] Generating questions using LLM for topic:', topic);
       let questions;
       try {
         questions = await LLMService.generateQuestionsFromText(
@@ -107,7 +268,8 @@ export class QuizService {
           class_id,
           subject,
           chapter,
-          classNumber
+          classNumber,
+          topic // Pass topic to LLM for focused question generation
         );
       } catch (llmError: any) {
         console.error('[QuizService] LLM service error:', llmError.message);
@@ -122,7 +284,7 @@ export class QuizService {
 
       console.log('[QuizService] Questions generated successfully:', questions.length);
 
-      // 4. Calculate quiz index for this student & chapter (for tracking)
+      // 4. Calculate quiz index for this student & topic (for tracking)
       console.log('[QuizService] Calculating quiz index');
       let allQuizzes;
       try {
@@ -132,7 +294,7 @@ export class QuizService {
             school_id,
             class_id,
             subject,
-            chapter,
+            topic,
           })
           .toArray();
       } catch (dbError: any) {
@@ -167,6 +329,7 @@ export class QuizService {
         class_id,
         subject,
         chapter,
+        topic,
         quiz_index,
         week_number,
         questions,
@@ -182,19 +345,238 @@ export class QuizService {
         created_at: now,
       };
 
-      console.log('[QuizService] Inserting quiz attempt into database:', quiz_id);
+      console.log('[QuizService] Inserting quiz attempt into database:', quiz_id, 'for student_id:', student_id);
       try {
-        await quizCol.insertOne(quizAttempt);
+        const insertResult = await quizCol.insertOne(quizAttempt);
+
+        if (!insertResult.acknowledged) {
+          console.error('[QuizService] ❌ Database write was not acknowledged!');
+          throw new Error('Database write was not acknowledged');
+        }
+
+        console.log('[QuizService] ✅ Quiz inserted into database, insertedId:', insertResult.insertedId);
       } catch (dbError: any) {
-        console.error('[QuizService] Database error inserting quiz attempt:', dbError.message);
+        console.error('[QuizService] ❌ Database error inserting quiz attempt:', dbError.message);
+        console.error('[QuizService] Error stack:', dbError.stack);
         throw new Error(`Database error: Failed to create quiz: ${dbError.message}`);
       }
 
-      console.log('[QuizService] Quiz generated successfully:', quiz_id);
+      // Verify the quiz was actually saved
+      try {
+        const verification = await quizCol.findOne({ quiz_id });
+        if (!verification) {
+          console.error('[QuizService] ❌ CRITICAL: Quiz was inserted but cannot be found!');
+          throw new Error('Quiz insertion verification failed - document not found after insert');
+        }
+        console.log('[QuizService] ✅ Quiz verified in database:', quiz_id);
+      } catch (verifyError: any) {
+        console.error('[QuizService] ❌ Verification error:', verifyError.message);
+        throw new Error(`Failed to verify quiz insertion: ${verifyError.message}`);
+      }
+
+      console.log('[QuizService] ✅ Quiz generated and saved successfully:', {
+        quiz_id,
+        student_id,
+        subject,
+        chapter,
+        topic,
+        question_count: questions.length
+      });
       return quizAttempt as QuizAttempt;
     } catch (error: any) {
       console.error('[QuizService] Fatal error in generateQuiz:', error.message);
       throw new Error(`Failed to generate quiz: ${error.message}`);
+    }
+  }
+
+  /**
+   * Sync V1 quiz submission to V2 system tables
+   * Creates/updates: question_sets, question_set_attempts, student_skill_stats
+   */
+  private static async syncToV2System(
+    quizAttempt: any,
+    answerMap: Record<string, number>,
+    correct_count: number,
+    total_questions: number,
+    score_total: number,
+    feature_scores: any
+  ): Promise<void> {
+    // Extract class number from class_id
+    const classNumber = parseInt(quizAttempt.class_id.replace(/\D/g, ''), 10) || 0;
+
+    console.log('[QuizService V2 Sync] Creating question set and attempt for:', {
+      quiz_id: quizAttempt.quiz_id,
+      student_id: quizAttempt.student_id,
+      class_number: classNumber,
+      subject: quizAttempt.subject,
+      topic: quizAttempt.topic,
+    });
+
+    // STEP 1: Create or find question set
+    const questionSetsCol = collections.question_sets();
+    let set_id = `set_from_quiz_${quizAttempt.quiz_id}`;
+
+    // Check if we already created a set for this quiz
+    let existingSet = await questionSetsCol.findOne({ set_id });
+
+    if (!existingSet) {
+      console.log('[QuizService V2 Sync] Creating new question set:', set_id);
+
+      // Convert V1 questions to V2 format
+      const v2Questions = quizAttempt.questions.map((q: any) => ({
+        id: q.id,
+        question: q.question,
+        options: q.options,
+        correct_option_index: q.correct_option_index,
+        skills: q.skills || [],
+        features: {
+          memorization: q.features?.memorization || 0,
+          reasoning: q.features?.reasoning || 0,
+          numerical: q.features?.numerical || 0,
+          language: q.features?.language || 0,
+        },
+        difficulty_score: q.features?.difficulty_score || 0.5,
+      }));
+
+      const questionSet = {
+        set_id,
+        class_number: classNumber,
+        class_label: quizAttempt.class_id,
+        subject: quizAttempt.subject,
+        chapter: quizAttempt.chapter,
+        topic: quizAttempt.topic,
+        questions: v2Questions,
+        difficulty_level: quizAttempt.difficulty_level || 5,
+        difficulty_label: 'medium',
+        created_at: quizAttempt.created_at || new Date(),
+        created_by: quizAttempt.student_id,
+      };
+
+      await questionSetsCol.insertOne(questionSet);
+      console.log('[QuizService V2 Sync] ✅ Question set created:', set_id);
+    } else {
+      console.log('[QuizService V2 Sync] Using existing question set:', set_id);
+    }
+
+    // STEP 2: Create question set attempt
+    const attemptsCol = collections.question_set_attempts();
+    const attempt_id = `attempt_from_quiz_${quizAttempt.quiz_id}`;
+
+    // Check if attempt already exists
+    const existingAttempt = await attemptsCol.findOne({ attempt_id });
+
+    if (!existingAttempt) {
+      console.log('[QuizService V2 Sync] Creating question set attempt:', attempt_id);
+
+      // Build graded answers
+      const gradedAnswers = quizAttempt.questions.map((q: any) => ({
+        question_id: q.id,
+        selected_option_index: answerMap[q.id] !== undefined ? answerMap[q.id] : -1,
+        is_correct: answerMap[q.id] === q.correct_option_index,
+      }));
+
+      const questionSetAttempt = {
+        attempt_id,
+        student_id: String(quizAttempt.student_id),
+        school_id: quizAttempt.school_id,
+        set_id,
+        class_number: classNumber,
+        class_label: quizAttempt.class_id,
+        subject: quizAttempt.subject,
+        chapter: quizAttempt.chapter,
+        topic: quizAttempt.topic,
+        answers: gradedAnswers,
+        score_total: correct_count,
+        score_percentage: score_total * 100,
+        total_questions,
+        correct_count,
+        incorrect_count: total_questions - correct_count,
+        features_aggregated: {
+          memorization: feature_scores.memorization || 0,
+          reasoning: feature_scores.reasoning || 0,
+          numerical: feature_scores.numerical || 0,
+          language: feature_scores.language || 0,
+        },
+        submitted_at: new Date(),
+      };
+
+      await attemptsCol.insertOne(questionSetAttempt);
+      console.log('[QuizService V2 Sync] ✅ Question set attempt created:', attempt_id);
+    } else {
+      console.log('[QuizService V2 Sync] Question set attempt already exists:', attempt_id);
+    }
+
+    // STEP 3: Update student skill stats
+    console.log('[QuizService V2 Sync] Updating student skill stats');
+    const skillStatsCol = collections.student_skill_stats();
+
+    const statsQuery = {
+      student_id: String(quizAttempt.student_id),
+      school_id: quizAttempt.school_id,
+      class_number: classNumber,
+      subject: quizAttempt.subject,
+      topic: quizAttempt.topic,
+    };
+
+    const existingStats = await skillStatsCol.findOne(statsQuery);
+
+    if (existingStats) {
+      // Update existing stats
+      const newTotalQuestions = existingStats.total_questions_answered + total_questions;
+      const newCorrectCount = existingStats.correct_count + correct_count;
+      const newIncorrectCount = existingStats.incorrect_count + (total_questions - correct_count);
+      const newAccuracy = (newCorrectCount / newTotalQuestions) * 100;
+
+      // Update feature averages
+      const oldWeight = existingStats.total_questions_answered;
+      const newWeight = total_questions;
+      const totalWeight = oldWeight + newWeight;
+
+      const updatedFeatures = {
+        memorization: ((existingStats.features_avg.memorization * oldWeight) + (feature_scores.memorization * newWeight)) / totalWeight,
+        reasoning: ((existingStats.features_avg.reasoning * oldWeight) + (feature_scores.reasoning * newWeight)) / totalWeight,
+        numerical: ((existingStats.features_avg.numerical * oldWeight) + (feature_scores.numerical * newWeight)) / totalWeight,
+        language: ((existingStats.features_avg.language * oldWeight) + (feature_scores.language * newWeight)) / totalWeight,
+      };
+
+      await skillStatsCol.updateOne(statsQuery, {
+        $set: {
+          total_questions_answered: newTotalQuestions,
+          correct_count: newCorrectCount,
+          incorrect_count: newIncorrectCount,
+          accuracy_percentage: newAccuracy,
+          features_avg: updatedFeatures,
+          last_attempt_at: new Date(),
+          updated_at: new Date(),
+        },
+      });
+
+      console.log('[QuizService V2 Sync] ✅ Student skill stats updated (existing)');
+    } else {
+      // Create new stats
+      const newStats = {
+        student_id: String(quizAttempt.student_id),
+        school_id: quizAttempt.school_id,
+        class_number: classNumber,
+        subject: quizAttempt.subject,
+        topic: quizAttempt.topic,
+        total_questions_answered: total_questions,
+        correct_count,
+        incorrect_count: total_questions - correct_count,
+        accuracy_percentage: (correct_count / total_questions) * 100,
+        skills: [],
+        features_avg: {
+          memorization: feature_scores.memorization || 0,
+          reasoning: feature_scores.reasoning || 0,
+          numerical: feature_scores.numerical || 0,
+          language: feature_scores.language || 0,
+        },
+        last_attempt_at: new Date(),
+        updated_at: new Date(),
+      };
+
+      await skillStatsCol.insertOne(newStats);
+      console.log('[QuizService V2 Sync] ✅ Student skill stats created (new)');
     }
   }
 
@@ -291,7 +673,7 @@ export class QuizService {
       console.log('[QuizService] Feature scores calculated:', feature_scores);
 
       // 5. Update quiz attempt
-      console.log('[QuizService] Updating quiz submission');
+      console.log('[QuizService] Updating quiz submission for quiz_id:', quiz_id, 'student_id:', quizAttempt.student_id);
       try {
         const updateResult = await quizCol.updateOne(
           { quiz_id },
@@ -305,15 +687,73 @@ export class QuizService {
           }
         );
 
-        if (updateResult.modifiedCount === 0) {
-          console.warn('[QuizService] Quiz update affected 0 documents');
+        if (!updateResult.acknowledged) {
+          console.error('[QuizService] ❌ Database update was not acknowledged!');
+          throw new Error('Database update was not acknowledged');
         }
+
+        if (updateResult.matchedCount === 0) {
+          console.error('[QuizService] ❌ Quiz not found in database - matchedCount: 0');
+          throw new Error(`Quiz not found: ${quiz_id}`);
+        }
+
+        if (updateResult.modifiedCount === 0) {
+          console.error('[QuizService] ❌ Quiz update affected 0 documents - quiz may already be submitted');
+          throw new Error('Quiz update failed - no documents modified');
+        }
+
+        console.log('[QuizService] ✅ Quiz update acknowledged:', {
+          matchedCount: updateResult.matchedCount,
+          modifiedCount: updateResult.modifiedCount,
+        });
+
+        // Verify the update was actually saved
+        const updatedQuiz = await quizCol.findOne({ quiz_id });
+        if (!updatedQuiz) {
+          console.error('[QuizService] ❌ CRITICAL: Quiz not found after update!');
+          throw new Error('Quiz verification failed after update');
+        }
+
+        if (!updatedQuiz.submitted_at) {
+          console.error('[QuizService] ❌ CRITICAL: Quiz found but submitted_at not set!');
+          throw new Error('Quiz update verification failed - submitted_at not set');
+        }
+
+        console.log('[QuizService] ✅ Quiz submission verified in database');
+        console.log('[QuizService] ✅ Quiz submitted successfully:', {
+          quiz_id,
+          student_id: quizAttempt.student_id,
+          subject: quizAttempt.subject,
+          topic: quizAttempt.topic,
+          score: `${correct_count}/${total_questions}`,
+          percentage: `${(score_total * 100).toFixed(1)}%`
+        });
       } catch (dbError: any) {
-        console.error('[QuizService] Database error updating quiz:', dbError.message);
+        console.error('[QuizService] ❌ Database error updating quiz:', dbError.message);
+        console.error('[QuizService] Error stack:', dbError.stack);
         throw new Error(`Database error: Failed to submit quiz: ${dbError.message}`);
       }
 
-      console.log('[QuizService] Quiz submitted successfully');
+      // ============================================================================
+      // DUAL-WRITE TO V2 SYSTEM: Populate question_sets, question_set_attempts, student_skill_stats
+      // ============================================================================
+      console.log('[QuizService] 🔄 Syncing submission to V2 system (question_sets, question_set_attempts, student_skill_stats)');
+      try {
+        await this.syncToV2System(
+          quizAttempt,
+          answerMap,
+          correct_count,
+          total_questions,
+          score_total,
+          feature_scores
+        );
+        console.log('[QuizService] ✅ V2 system sync completed successfully');
+      } catch (syncError: any) {
+        // Don't fail the entire submission if V2 sync fails - just log it
+        console.error('[QuizService] ⚠️ Failed to sync to V2 system (non-critical):', syncError.message);
+        console.error('[QuizService] V2 sync error stack:', syncError.stack);
+      }
+
       return {
         score_total,
         feature_scores,

@@ -85,3 +85,111 @@ export const getDemoProfile = (req: Request, res: Response): void | Response => 
     res.status(500).json({ error: error.message });
   }
 };
+// ----------------- Password Management -----------------
+
+export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      res.status(400).json({ error: 'Email is required' });
+      return;
+    }
+
+    const sent = await AuthService.requestPasswordReset(email);
+
+    // Always return success to prevent email enumeration
+    res.json({ message: 'If that email exists, a reset link has been sent.' });
+  } catch (error: any) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const resetPassword = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) {
+      res.status(400).json({ error: 'Token and new password are required' });
+      return;
+    }
+
+    await AuthService.resetPassword(token, newPassword);
+    res.json({ message: 'Password reset successful. You can now login.' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+export const verifyInvite = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      res.status(400).json({ error: 'Token is required' });
+      return;
+    }
+
+    const result = await AuthService.verifyInviteToken(token);
+    if (result.valid) {
+      res.json(result);
+    } else {
+      res.status(400).json({ error: 'Invalid or expired invite token' });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const completeInvite = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token, password } = req.body;
+    if (!token || !password) {
+      res.status(400).json({ error: 'Token and password are required' });
+      return;
+    }
+
+    await AuthService.completeInvite(token, password);
+    res.json({ message: 'Account setup successful. You can now login.' });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// ============================================================================
+// NEW UNIFIED AUTH CONTROLLERS
+// ============================================================================
+
+export const sendAuthLink = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, purpose, role } = req.body;
+    if (!email || !purpose) {
+      res.status(400).json({ error: 'Email and purpose are required' });
+      return;
+    }
+
+    if (!['login', 'reset', 'verify'].includes(purpose)) {
+      res.status(400).json({ error: 'Invalid purpose' });
+      return;
+    }
+
+    await AuthService.sendAuthLink(email, purpose, role);
+    res.json({ message: 'Link sent successfully' });
+  } catch (error: any) {
+    console.error('[Auth] Send Link Error:', error);
+    res.status(500).json({ error: error.message || 'Failed to send link' });
+  }
+};
+
+export const verifyAuthToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { token } = req.body;
+    if (!token) {
+      res.status(400).json({ error: 'Token is required' });
+      return;
+    }
+
+    const result = await AuthService.verifyAuthToken(token);
+    res.json(result);
+  } catch (error: any) {
+    console.error('[Auth] Verify Token Error:', error);
+    res.status(400).json({ error: error.message || 'Invalid or expired token' });
+  }
+};

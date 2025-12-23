@@ -13,11 +13,23 @@ import {
   generateStudyPlan,
   getStudyPlan,
   getAllStudyPlans,
+  generateQuizV2,
+  submitQuizV2,
 } from '../controllers/quizController';
 
 const router: Router = express.Router();
 
-// Quiz operations
+// ============================================================================
+// V2 QUIZ API - REUSABLE QUIZ SETS (NEW SYSTEM)
+// ============================================================================
+// These routes implement quiz set reuse across students
+router.post('/v2/generate', generateQuizV2);
+router.post('/v2/submit', submitQuizV2);
+
+// ============================================================================
+// V1 QUIZ API - LEGACY SYSTEM (PRESERVED FOR BACKWARD COMPATIBILITY)
+// ============================================================================
+// Quiz operations (old system)
 router.post('/generate', generateQuiz);
 router.post('/submit', submitQuiz);
 router.get('/:quiz_id', getQuiz);

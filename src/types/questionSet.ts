@@ -35,7 +35,8 @@ export interface QuestionSet {
   chapter: string;
   topic: string;
   questions: Question[];
-  difficulty_level: number;        // Overall set difficulty
+  difficulty_level: number;        // Overall set difficulty (numeric 1-10)
+  difficulty_label?: string;       // "easy" | "medium" | "hard" | "adaptive"
   created_at: Date;
   created_by?: string;             // Optional: student_id who triggered generation
 }
@@ -113,6 +114,7 @@ export interface GenerateQuizRequest {
   subject: string;
   chapter: string;
   topic: string;
+  difficulty_label?: string;       // "easy" | "medium" | "hard" | Optional
   num_questions?: number;          // Default 10
 }
 

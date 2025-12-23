@@ -25,7 +25,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-export function authenticateStudent(
+export function authenticateToken(
   req: AuthRequest,
   res: Response,
   next: NextFunction
@@ -33,12 +33,18 @@ export function authenticateStudent(
   try {
     const authHeader = req.headers.authorization;
 
+    console.log('[Auth Middleware] Auth header value:', authHeader);
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      console.error('[Auth Middleware] Invalid auth header format');
       return res.status(401).json({ error: 'No token provided' });
     }
 
     const token = authHeader.substring(7);
+    console.log('[Auth Middleware] Token extracted, length:', token.length);
+    console.log('[Auth Middleware] Verifying token...');
     const payload = AuthService.verifyToken(token);
+    console.log('[Auth Middleware] Token verified successfully for user:', payload.email);
 
     // Store user data
     req.user = payload;
@@ -56,6 +62,25 @@ export function authenticateStudent(
 
     next();
   } catch (error: any) {
+    console.error('[Auth Middleware] Token verification failed:', error.message);
+    console.error('[Auth Middleware] Error stack:', error.stack);
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 }
+
+export function requireRole(allowedRoles: string[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ error: 'Forbidden: Insufficient permissions' });
+    }
+
+    next();
+  };
+}
+
+// Alias for backward compatibility if needed elsewhere
+export const authenticateStudent = authenticateToken;

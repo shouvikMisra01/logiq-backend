@@ -5,6 +5,7 @@
 
 import { collections } from '../config/database';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 
 interface SchoolStats {
   total_schools: number;
@@ -139,10 +140,34 @@ export class SchoolService {
 
     await schoolsCol.insertOne(school);
 
+    // Create Initial School Admin and Invite
+    const adminId = `admin_${uuidv4().substring(0, 8)}`;
+    const inviteToken = crypto.randomBytes(32).toString('hex');
+    const inviteExpires = new Date(Date.now() + 72 * 60 * 60 * 1000); // 72 hours
+
+    const adminUser = {
+      admin_id: adminId,
+      school_id: schoolId,
+      name: schoolData.name + ' Admin',
+      email: schoolData.contact_email,
+      role: 'school_admin',
+      is_verified: false,
+      invite_token: inviteToken,
+      invite_expires: inviteExpires,
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    await collections.school_admins().insertOne(adminUser);
+
+    // Send Invite
+    const { EmailService } = await import('./emailService');
+    await EmailService.sendInvite(schoolData.contact_email, inviteToken, 'school_admin');
+
     return {
       success: true,
       school_id: schoolId,
-      message: 'School created successfully',
+      message: 'School created and invite sent to admin email',
     };
   }
 

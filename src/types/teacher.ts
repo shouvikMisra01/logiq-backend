@@ -1,4 +1,6 @@
-export interface TeacherDoc {
+import { AuthFields } from './auth';
+
+export interface TeacherDoc extends AuthFields {
   _id?: any;
   teacher_id: string;
   school_id: string;
