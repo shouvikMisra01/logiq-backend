@@ -17,6 +17,7 @@ import teacherRoutes from './routes/teachers';
 import classesRoutes from './routes/classes';
 import passwordRoutes from './routes/password';
 import schoolAdminRoutes from './routes/schoolAdmin';
+import adminRoutes from './routes/admin';
 import { errorHandler } from './middleware/errorMiddleware';
 
 const app: Application = express();
@@ -84,6 +85,7 @@ app.use("/api/chapters", chaptersRoutes);
 app.use('/api', teacherRoutes);
 app.use('/api/classes', classesRoutes);
 app.use('/api/school-admin', schoolAdminRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check
 app.get('/api/health', (req: Request, res: Response) => {
